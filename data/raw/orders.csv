@@ -1,0 +1,11 @@
+order_id,customer_id,order_date,category,product,quantity,unit_price,status
+1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered
+1002,C002,2026-06-01,Electronics,Mouse,1,800,delivered
+1003,C003,2026-06-02,Home,Desk Lamp,3,1200,delivered
+1004,C004,2026-06-02,Fashion,T-Shirt,4,500,cancelled
+1005,C002,2026-06-03,Electronics,Monitor,1,9500,delivered
+1006,C005,2026-06-03,Home,Chair,2,3500,delivered
+1007,C006,2026-06-04,Fashion,Shoes,1,2500,returned
+1008,C007,2026-06-04,Electronics,USB Cable,5,250,delivered
+1009,C008,2026-06-05,Home,Notebook,10,80,delivered
+1010,C009,2026-06-05,Fashion,Jacket,1,4200,delivered
