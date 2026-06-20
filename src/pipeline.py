@@ -1,13 +1,30 @@
 import csv
+import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 
-from quality_checks import run_quality_checks
+try:
+    from .quality_checks import run_quality_checks
+except ImportError:  # Support direct execution with `python src/pipeline.py`.
+    from quality_checks import run_quality_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_PATH = ROOT / "data" / "raw" / "orders.csv"
-PROCESSED_DIR = ROOT / "data" / "processed"
+DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
+LOGGER = logging.getLogger(__name__)
+
+
+def load_config(path=DEFAULT_CONFIG_PATH):
+    with Path(path).open(encoding="utf-8") as file:
+        config = json.load(file)
+
+    required = {"raw_path", "processed_dir", "included_statuses"}
+    missing = required - set(config)
+    if missing:
+        raise ValueError(f"Missing configuration keys: {sorted(missing)}")
+
+    return config
 
 
 def read_csv(path):
@@ -23,15 +40,16 @@ def write_csv(path, rows, fieldnames):
         writer.writerows(rows)
 
 
-def build_silver_orders(rows):
+def build_silver_orders(rows, included_statuses=("delivered",)):
     silver_rows = []
+    included_statuses = set(included_statuses)
 
     for row in rows:
         quantity = int(row["quantity"])
         unit_price = float(row["unit_price"])
         revenue = quantity * unit_price
 
-        if row["status"] != "delivered":
+        if row["status"] not in included_statuses:
             continue
 
         silver_rows.append(
@@ -75,19 +93,44 @@ def build_gold_revenue(rows):
     return gold_rows
 
 
-def main():
-    bronze_rows = read_csv(RAW_PATH)
+def write_layer(path, rows, fieldnames):
+    write_csv(path, rows, fieldnames)
+    LOGGER.info("Wrote %s rows to %s", len(rows), path)
+
+
+def main(config_path=DEFAULT_CONFIG_PATH):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    config = load_config(config_path)
+    raw_path = ROOT / config["raw_path"]
+    processed_dir = ROOT / config["processed_dir"]
+
+    LOGGER.info("Starting pipeline with source %s", raw_path)
+    bronze_rows = read_csv(raw_path)
     run_quality_checks(bronze_rows)
 
-    write_csv(PROCESSED_DIR / "bronze_orders.csv", bronze_rows, bronze_rows[0].keys())
+    write_layer(processed_dir / "bronze_orders.csv", bronze_rows, bronze_rows[0].keys())
 
-    silver_rows = build_silver_orders(bronze_rows)
-    write_csv(PROCESSED_DIR / "silver_orders.csv", silver_rows, silver_rows[0].keys())
+    silver_rows = build_silver_orders(bronze_rows, config["included_statuses"])
+    silver_fields = [
+        "order_id", "customer_id", "order_date", "category", "product",
+        "quantity", "unit_price", "revenue",
+    ]
+    write_layer(processed_dir / "silver_orders.csv", silver_rows, silver_fields)
 
     gold_rows = build_gold_revenue(silver_rows)
-    write_csv(PROCESSED_DIR / "gold_revenue_metrics.csv", gold_rows, gold_rows[0].keys())
+    gold_fields = [
+        "order_date", "category", "orders", "units", "revenue",
+        "average_order_value",
+    ]
+    write_layer(processed_dir / "gold_revenue_metrics.csv", gold_rows, gold_fields)
 
-    print(f"Pipeline completed. Processed {len(bronze_rows)} raw rows.")
+    LOGGER.info(
+        "Pipeline completed: %s raw, %s silver, and %s gold rows",
+        len(bronze_rows), len(silver_rows), len(gold_rows),
+    )
 
 
 if __name__ == "__main__":

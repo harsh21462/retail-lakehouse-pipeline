@@ -45,8 +45,14 @@ retail-lakehouse-pipeline/
 ## Run Locally
 
 ```bash
+python -m pip install -r requirements-dev.txt
 python src/pipeline.py
+python -m pytest -q
 ```
+
+Pipeline paths and included order statuses are configured in
+`config/pipeline.json`. Each run emits progress logs for operation and
+troubleshooting.
 
 Output files are written to:
 

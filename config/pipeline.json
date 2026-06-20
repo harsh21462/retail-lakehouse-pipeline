@@ -1,0 +1,5 @@
+{
+  "raw_path": "data/raw/orders.csv",
+  "processed_dir": "data/processed",
+  "included_statuses": ["delivered"]
+}
