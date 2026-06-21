@@ -54,6 +54,10 @@ Pipeline paths and included order statuses are configured in
 `config/pipeline.json`. Each run emits progress logs for operation and
 troubleshooting.
 
+Every push and pull request also runs the pipeline as a smoke test and executes
+the full pytest suite in GitHub Actions. The integration test uses isolated
+temporary input and verifies the generated bronze, silver, and gold datasets.
+
 Output files are written to:
 
 ```text
@@ -67,7 +71,7 @@ data/processed/
 - Add Great Expectations style data quality checks.
 - Add Airflow DAG for orchestration.
 - Add dbt models for SQL transformations.
-- Add GitHub Actions for automated tests.
+- [x] Add GitHub Actions for automated tests.
 - Add Power BI or Streamlit dashboard.
 
 ## Daily Commit Ideas
