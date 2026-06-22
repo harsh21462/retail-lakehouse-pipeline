@@ -40,7 +40,7 @@ retail-lakehouse-pipeline/
 2. Write a bronze copy with minimal changes.
 3. Build a silver dataset with cleaned types and valid rows.
 4. Build a gold revenue summary by order date and category.
-5. Run basic quality checks.
+5. Run named data quality expectations and persist their validation report.
 
 ## Run Locally
 
@@ -64,11 +64,16 @@ Output files are written to:
 data/processed/
 ```
 
+Each successful run also writes `data_quality_report.json` with the overall
+validation status, source row count, and observed values for every expectation.
+The pipeline currently checks that the dataset is non-empty, required columns
+exist, order IDs are unique, and quantity and price are positive numbers.
+
 ## Roadmap
 
 - Add PySpark version of the pipeline.
 - Add partitioned Parquet output.
-- Add Great Expectations style data quality checks.
+- [x] Add Great Expectations style data quality checks.
 - Add Airflow DAG for orchestration.
 - Add dbt models for SQL transformations.
 - [x] Add GitHub Actions for automated tests.

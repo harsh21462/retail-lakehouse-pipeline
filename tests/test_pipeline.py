@@ -34,6 +34,18 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
 
     main(config_path)
 
+    quality_report = json.loads(
+        (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
+    )
+    assert quality_report["success"] is True
+    assert quality_report["row_count"] == 3
+    assert [item["expectation"] for item in quality_report["expectations"]] == [
+        "dataset_is_not_empty",
+        "required_columns_are_present",
+        "order_id_is_unique",
+        "amounts_are_positive_numbers",
+    ]
+
     assert len(read_rows(processed_dir / "bronze_orders.csv")) == 3
     assert read_rows(processed_dir / "silver_orders.csv") == [
         {

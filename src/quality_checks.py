@@ -1,41 +1,74 @@
-def check_required_columns(rows, required_columns):
-    if not rows:
-        raise ValueError("Dataset is empty.")
-
-    missing = set(required_columns) - set(rows[0].keys())
-    if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
+from collections import Counter
 
 
-def check_no_duplicate_orders(rows):
-    order_ids = [row["order_id"] for row in rows]
-    duplicates = {order_id for order_id in order_ids if order_ids.count(order_id) > 1}
-    if duplicates:
-        raise ValueError(f"Duplicate order_id values found: {sorted(duplicates)}")
+REQUIRED_COLUMNS = [
+    "order_id",
+    "customer_id",
+    "order_date",
+    "category",
+    "product",
+    "quantity",
+    "unit_price",
+    "status",
+]
 
 
-def check_positive_amounts(rows):
-    invalid = [
-        row["order_id"]
-        for row in rows
-        if int(row["quantity"]) <= 0 or float(row["unit_price"]) <= 0
+def _expectation(name, success, observed):
+    return {"expectation": name, "success": success, "observed": observed}
+
+
+def evaluate_quality(rows):
+    """Evaluate the raw order data and return a machine-readable report."""
+    columns = list(rows[0]) if rows else []
+    missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
+    duplicate_ids = sorted(
+        order_id
+        for order_id, count in Counter(row.get("order_id") for row in rows).items()
+        if order_id is not None and count > 1
+    )
+
+    invalid_amount_ids = []
+    if not missing_columns:
+        for row in rows:
+            try:
+                valid = int(row["quantity"]) > 0 and float(row["unit_price"]) > 0
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                invalid_amount_ids.append(row["order_id"])
+
+    expectations = [
+        _expectation("dataset_is_not_empty", bool(rows), {"row_count": len(rows)}),
+        _expectation(
+            "required_columns_are_present",
+            not missing_columns,
+            {"missing_columns": missing_columns},
+        ),
+        _expectation(
+            "order_id_is_unique",
+            not duplicate_ids,
+            {"duplicate_order_ids": duplicate_ids},
+        ),
+        _expectation(
+            "amounts_are_positive_numbers",
+            not missing_columns and not invalid_amount_ids,
+            {"invalid_order_ids": invalid_amount_ids},
+        ),
     ]
-    if invalid:
-        raise ValueError(f"Invalid quantity or unit_price for orders: {invalid}")
+    return {
+        "success": all(result["success"] for result in expectations),
+        "row_count": len(rows),
+        "expectations": expectations,
+    }
 
 
 def run_quality_checks(rows):
-    required_columns = [
-        "order_id",
-        "customer_id",
-        "order_date",
-        "category",
-        "product",
-        "quantity",
-        "unit_price",
-        "status",
+    report = evaluate_quality(rows)
+    failed = [
+        result["expectation"]
+        for result in report["expectations"]
+        if not result["success"]
     ]
-
-    check_required_columns(rows, required_columns)
-    check_no_duplicate_orders(rows)
-    check_positive_amounts(rows)
+    if failed:
+        raise ValueError(f"Data quality checks failed: {', '.join(failed)}")
+    return report
