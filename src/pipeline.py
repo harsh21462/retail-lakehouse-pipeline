@@ -1,17 +1,19 @@
 import csv
 import json
 import logging
-from collections import defaultdict
 from pathlib import Path
 
 try:
     from .quality_checks import run_quality_checks
+    from .sql_transforms import run_gold_revenue_model
 except ImportError:  # Support direct execution with `python src/pipeline.py`.
     from quality_checks import run_quality_checks
+    from sql_transforms import run_gold_revenue_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
+GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -75,29 +77,8 @@ def build_silver_orders(rows, included_statuses=("delivered",)):
     return silver_rows
 
 
-def build_gold_revenue(rows):
-    metrics = defaultdict(lambda: {"orders": 0, "units": 0, "revenue": 0.0})
-
-    for row in rows:
-        key = (row["order_date"], row["category"])
-        metrics[key]["orders"] += 1
-        metrics[key]["units"] += row["quantity"]
-        metrics[key]["revenue"] += row["revenue"]
-
-    gold_rows = []
-    for (order_date, category), values in sorted(metrics.items()):
-        gold_rows.append(
-            {
-                "order_date": order_date,
-                "category": category,
-                "orders": values["orders"],
-                "units": values["units"],
-                "revenue": round(values["revenue"], 2),
-                "average_order_value": round(values["revenue"] / values["orders"], 2),
-            }
-        )
-
-    return gold_rows
+def build_gold_revenue(rows, sql_path=GOLD_SQL_PATH):
+    return run_gold_revenue_model(rows, sql_path)
 
 
 def write_layer(path, rows, fieldnames):

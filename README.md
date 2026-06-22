@@ -39,7 +39,7 @@ retail-lakehouse-pipeline/
 1. Read raw retail orders from `data/raw/orders.csv`.
 2. Write a bronze copy with minimal changes.
 3. Build a silver dataset with cleaned types and valid rows.
-4. Build a gold revenue summary by order date and category.
+4. Execute the version-controlled SQL model to build a gold revenue summary.
 5. Run named data quality expectations and persist their validation report.
 
 ## Run Locally
@@ -58,6 +58,10 @@ Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated
 temporary input and verifies the generated bronze, silver, and gold datasets.
 
+The gold layer is defined in `sql/gold_revenue_metrics.sql`. The pipeline loads
+the cleaned silver rows into an in-memory SQLite table and executes that model,
+so the SQL artifact is tested and used in every local and CI pipeline run.
+
 Output files are written to:
 
 ```text
@@ -75,7 +79,8 @@ exist, order IDs are unique, and quantity and price are positive numbers.
 - Add partitioned Parquet output.
 - [x] Add Great Expectations style data quality checks.
 - Add Airflow DAG for orchestration.
-- Add dbt models for SQL transformations.
+- [x] Add executable SQL model for gold transformations.
+- Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
 - Add Power BI or Streamlit dashboard.
 
