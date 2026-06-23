@@ -19,19 +19,25 @@ This project is designed to demonstrate practical data engineering skills:
 
 ```text
 retail-lakehouse-pipeline/
-├── data/
-│   ├── raw/
-│   │   └── orders.csv
-│   └── processed/
-├── sql/
-│   └── gold_revenue_metrics.sql
-├── src/
-│   ├── pipeline.py
-│   └── quality_checks.py
-├── tests/
-│   └── test_quality_checks.py
-├── .gitignore
-└── README.md
+|-- config/
+|   `-- pipeline.json
+|-- data/
+|   |-- raw/
+|   |   `-- orders.csv
+|   `-- processed/
+|-- sql/
+|   `-- gold_revenue_metrics.sql
+|-- src/
+|   |-- pipeline.py
+|   |-- quality_checks.py
+|   `-- sql_transforms.py
+|-- tests/
+|   |-- test_pipeline.py
+|   |-- test_quality_checks.py
+|   `-- test_sql_transforms.py
+|-- .github/workflows/ci.yml
+|-- .gitignore
+`-- README.md
 ```
 
 ## Current Pipeline
@@ -41,6 +47,7 @@ retail-lakehouse-pipeline/
 3. Build a silver dataset with cleaned types and valid rows.
 4. Execute the version-controlled SQL model to build a gold revenue summary.
 5. Run named data quality expectations and persist their validation report.
+6. Write a pipeline manifest with source checksum, config, row counts, quality status, and output artifact paths for each run.
 
 ## Run Locally
 
@@ -68,8 +75,14 @@ Output files are written to:
 data/processed/
 ```
 
-Each successful run also writes `data_quality_report.json` with the overall
-validation status, source row count, and observed values for every expectation.
+Each successful run also writes:
+
+- `data_quality_report.json` with the overall validation status, source row
+  count, and observed values for every expectation.
+- `pipeline_manifest.json` with the UTC run timestamp, source file SHA-256,
+  included order statuses, bronze/silver/gold row counts, quality summary, and
+  generated artifact paths.
+
 The pipeline currently checks that the dataset is non-empty, required columns
 exist, order IDs are unique, and quantity and price are positive numbers.
 
@@ -82,6 +95,7 @@ exist, order IDs are unique, and quantity and price are positive numbers.
 - [x] Add executable SQL model for gold transformations.
 - Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
+- [x] Add run manifest for pipeline observability.
 - Add Power BI or Streamlit dashboard.
 
 ## Daily Commit Ideas

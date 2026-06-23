@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 
 from src.pipeline import main
@@ -45,6 +46,29 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "order_id_is_unique",
         "amounts_are_positive_numbers",
     ]
+
+    manifest = json.loads(
+        (processed_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["generated_at_utc"].endswith("Z")
+    assert manifest["source"] == {
+        "path": str(raw_path),
+        "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        "rows": 3,
+    }
+    assert manifest["config"] == {"included_statuses": ["delivered"]}
+    assert manifest["layers"] == {
+        "bronze": {"rows": 3},
+        "silver": {"rows": 2},
+        "gold": {"rows": 2},
+    }
+    assert manifest["quality"] == {"success": True, "expectations": 4}
+    assert manifest["artifacts"] == {
+        "bronze_orders": str(processed_dir / "bronze_orders.csv"),
+        "silver_orders": str(processed_dir / "silver_orders.csv"),
+        "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
+        "data_quality_report": str(processed_dir / "data_quality_report.json"),
+    }
 
     assert len(read_rows(processed_dir / "bronze_orders.csv")) == 3
     assert read_rows(processed_dir / "silver_orders.csv") == [

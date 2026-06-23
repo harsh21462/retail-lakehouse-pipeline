@@ -1,6 +1,8 @@
 import csv
+import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -47,6 +49,56 @@ def write_json(path, value):
     with path.open("w", encoding="utf-8") as file:
         json.dump(value, file, indent=2)
         file.write("\n")
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_run_manifest(
+    *,
+    raw_path,
+    processed_dir,
+    included_statuses,
+    bronze_rows,
+    silver_rows,
+    gold_rows,
+    quality_report,
+):
+    artifacts = {
+        "bronze_orders": processed_dir / "bronze_orders.csv",
+        "silver_orders": processed_dir / "silver_orders.csv",
+        "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
+        "data_quality_report": processed_dir / "data_quality_report.json",
+    }
+
+    return {
+        "generated_at_utc": datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "source": {
+            "path": str(raw_path),
+            "sha256": file_sha256(raw_path),
+            "rows": len(bronze_rows),
+        },
+        "config": {
+            "included_statuses": list(included_statuses),
+        },
+        "layers": {
+            "bronze": {"rows": len(bronze_rows)},
+            "silver": {"rows": len(silver_rows)},
+            "gold": {"rows": len(gold_rows)},
+        },
+        "quality": {
+            "success": quality_report["success"],
+            "expectations": len(quality_report["expectations"]),
+        },
+        "artifacts": {name: str(path) for name, path in artifacts.items()},
+    }
 
 
 def build_silver_orders(rows, included_statuses=("delivered",)):
@@ -117,6 +169,19 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         "average_order_value",
     ]
     write_layer(processed_dir / "gold_revenue_metrics.csv", gold_rows, gold_fields)
+
+    manifest = build_run_manifest(
+        raw_path=raw_path,
+        processed_dir=processed_dir,
+        included_statuses=config["included_statuses"],
+        bronze_rows=bronze_rows,
+        silver_rows=silver_rows,
+        gold_rows=gold_rows,
+        quality_report=quality_report,
+    )
+    manifest_path = processed_dir / "pipeline_manifest.json"
+    write_json(manifest_path, manifest)
+    LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
 
     LOGGER.info(
         "Pipeline completed: %s raw, %s silver, and %s gold rows",
