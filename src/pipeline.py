@@ -8,15 +8,16 @@ from pathlib import Path
 
 try:
     from .quality_checks import run_quality_checks
-    from .sql_transforms import run_gold_revenue_model
+    from .sql_transforms import run_gold_model, run_gold_revenue_model
 except ImportError:  # Support direct execution with `python src/pipeline.py`.
     from quality_checks import run_quality_checks
-    from sql_transforms import run_gold_revenue_model
+    from sql_transforms import run_gold_model, run_gold_revenue_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
 GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
+GOLD_CUSTOMER_SQL_PATH = ROOT / "sql" / "gold_customer_metrics.sql"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -68,12 +69,14 @@ def build_run_manifest(
     bronze_rows,
     silver_rows,
     gold_rows,
+    customer_gold_rows,
     quality_report,
 ):
     artifacts = {
         "bronze_orders": processed_dir / "bronze_orders.csv",
         "silver_orders": processed_dir / "silver_orders.csv",
         "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
+        "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
     }
 
@@ -93,6 +96,7 @@ def build_run_manifest(
             "bronze": {"rows": len(bronze_rows)},
             "silver": {"rows": len(silver_rows)},
             "gold": {"rows": len(gold_rows)},
+            "gold_customer": {"rows": len(customer_gold_rows)},
         },
         "quality": {
             "success": quality_report["success"],
@@ -132,6 +136,10 @@ def build_silver_orders(rows, included_statuses=("delivered",)):
 
 def build_gold_revenue(rows, sql_path=GOLD_SQL_PATH):
     return run_gold_revenue_model(rows, sql_path)
+
+
+def build_gold_customer_metrics(rows, sql_path=GOLD_CUSTOMER_SQL_PATH):
+    return run_gold_model(rows, sql_path)
 
 
 def write_layer(path, rows, fieldnames):
@@ -199,6 +207,17 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     ]
     write_layer(processed_dir / "gold_revenue_metrics.csv", gold_rows, gold_fields)
 
+    customer_gold_rows = build_gold_customer_metrics(silver_rows)
+    customer_gold_fields = [
+        "customer_id", "orders", "units", "revenue", "first_order_date",
+        "last_order_date",
+    ]
+    write_layer(
+        processed_dir / "gold_customer_metrics.csv",
+        customer_gold_rows,
+        customer_gold_fields,
+    )
+
     manifest = build_run_manifest(
         raw_path=raw_path,
         processed_dir=processed_dir,
@@ -206,6 +225,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         bronze_rows=bronze_rows,
         silver_rows=silver_rows,
         gold_rows=gold_rows,
+        customer_gold_rows=customer_gold_rows,
         quality_report=quality_report,
     )
     manifest["artifacts"]["silver_orders_by_date"] = str(
@@ -220,8 +240,9 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
 
     LOGGER.info(
-        "Pipeline completed: %s raw, %s silver, and %s gold rows",
-        len(bronze_rows), len(silver_rows), len(gold_rows),
+        "Pipeline completed: %s raw, %s silver, %s revenue gold, "
+        "and %s customer gold rows",
+        len(bronze_rows), len(silver_rows), len(gold_rows), len(customer_gold_rows),
     )
 
 

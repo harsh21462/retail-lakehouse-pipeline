@@ -67,6 +67,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             },
         },
         "gold": {"rows": 2},
+        "gold_customer": {"rows": 2},
     }
     assert manifest["quality"] == {"success": True, "expectations": 4}
     assert manifest["artifacts"] == {
@@ -74,6 +75,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "silver_orders": str(processed_dir / "silver_orders.csv"),
         "silver_orders_by_date": str(processed_dir / "silver_orders_by_date"),
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
+        "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
     }
 
@@ -150,5 +152,23 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "units": "2",
             "revenue": "5000.0",
             "average_order_value": "5000.0",
+        },
+    ]
+    assert read_rows(processed_dir / "gold_customer_metrics.csv") == [
+        {
+            "customer_id": "C003",
+            "orders": "1",
+            "units": "2",
+            "revenue": "5000.0",
+            "first_order_date": "2026-06-02",
+            "last_order_date": "2026-06-02",
+        },
+        {
+            "customer_id": "C001",
+            "orders": "1",
+            "units": "2",
+            "revenue": "3000.0",
+            "first_order_date": "2026-06-01",
+            "last_order_date": "2026-06-01",
         },
     ]

@@ -26,6 +26,7 @@ retail-lakehouse-pipeline/
 |   |   `-- orders.csv
 |   `-- processed/
 |-- sql/
+|   |-- gold_customer_metrics.sql
 |   `-- gold_revenue_metrics.sql
 |-- src/
 |   |-- pipeline.py
@@ -47,7 +48,7 @@ retail-lakehouse-pipeline/
 3. Build a silver dataset with cleaned types and valid rows.
 4. Write the silver layer both as a flat CSV and as date-partitioned CSV
    folders for incremental analytics reads.
-5. Execute the version-controlled SQL model to build a gold revenue summary.
+5. Execute version-controlled SQL models to build gold revenue and customer summaries.
 6. Run named data quality expectations and persist their validation report.
 7. Write a pipeline manifest with source checksum, config, row counts, quality status, partition metadata, and output artifact paths for each run.
 
@@ -67,9 +68,10 @@ Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated
 temporary input and verifies the generated bronze, silver, and gold datasets.
 
-The gold layer is defined in `sql/gold_revenue_metrics.sql`. The pipeline loads
-the cleaned silver rows into an in-memory SQLite table and executes that model,
-so the SQL artifact is tested and used in every local and CI pipeline run.
+The gold layers are defined in `sql/gold_revenue_metrics.sql` and
+`sql/gold_customer_metrics.sql`. The pipeline loads the cleaned silver rows into
+an in-memory SQLite table and executes those models, so the SQL artifacts are
+tested and used in every local and CI pipeline run.
 
 Output files are written to:
 
@@ -83,7 +85,10 @@ Each successful run also writes:
   count, and observed values for every expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, source file SHA-256,
   included order statuses, bronze/silver/gold row counts, silver partition
-  values, quality summary, and generated artifact paths.
+  values, customer metric row counts, quality summary, and generated artifact
+  paths.
+- `gold_customer_metrics.csv` with customer-level order count, units, revenue,
+  and first/last order dates.
 - `silver_orders_by_date/order_date=<YYYY-MM-DD>/silver_orders.csv` partition
   files for date-scoped silver reads.
 

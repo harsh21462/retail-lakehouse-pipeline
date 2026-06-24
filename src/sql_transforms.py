@@ -14,8 +14,8 @@ SILVER_COLUMNS = [
 ]
 
 
-def run_gold_revenue_model(rows, sql_path):
-    """Load silver rows into SQLite and execute the checked-in gold SQL model."""
+def run_gold_model(rows, sql_path):
+    """Load silver rows into SQLite and execute a checked-in gold SQL model."""
     query = Path(sql_path).read_text(encoding="utf-8")
 
     with sqlite3.connect(":memory:") as connection:
@@ -42,3 +42,7 @@ def run_gold_revenue_model(rows, sql_path):
         results = connection.execute(query).fetchall()
 
     return [dict(row) for row in results]
+
+
+def run_gold_revenue_model(rows, sql_path):
+    return run_gold_model(rows, sql_path)
