@@ -59,13 +59,20 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["config"] == {"included_statuses": ["delivered"]}
     assert manifest["layers"] == {
         "bronze": {"rows": 3},
-        "silver": {"rows": 2},
+        "silver": {
+            "rows": 2,
+            "partitions": {
+                "field": "order_date",
+                "values": ["2026-06-01", "2026-06-02"],
+            },
+        },
         "gold": {"rows": 2},
     }
     assert manifest["quality"] == {"success": True, "expectations": 4}
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "silver_orders": str(processed_dir / "silver_orders.csv"),
+        "silver_orders_by_date": str(processed_dir / "silver_orders_by_date"),
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
     }
@@ -92,6 +99,40 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "unit_price": "2500.0",
             "revenue": "5000.0",
         },
+    ]
+    assert read_rows(
+        processed_dir
+        / "silver_orders_by_date"
+        / "order_date=2026-06-01"
+        / "silver_orders.csv"
+    ) == [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500.0",
+            "revenue": "3000.0",
+        }
+    ]
+    assert read_rows(
+        processed_dir
+        / "silver_orders_by_date"
+        / "order_date=2026-06-02"
+        / "silver_orders.csv"
+    ) == [
+        {
+            "order_id": "1003",
+            "customer_id": "C003",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "2",
+            "unit_price": "2500.0",
+            "revenue": "5000.0",
+        }
     ]
     assert read_rows(processed_dir / "gold_revenue_metrics.csv") == [
         {

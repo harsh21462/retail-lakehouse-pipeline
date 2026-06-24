@@ -45,9 +45,11 @@ retail-lakehouse-pipeline/
 1. Read raw retail orders from `data/raw/orders.csv`.
 2. Write a bronze copy with minimal changes.
 3. Build a silver dataset with cleaned types and valid rows.
-4. Execute the version-controlled SQL model to build a gold revenue summary.
-5. Run named data quality expectations and persist their validation report.
-6. Write a pipeline manifest with source checksum, config, row counts, quality status, and output artifact paths for each run.
+4. Write the silver layer both as a flat CSV and as date-partitioned CSV
+   folders for incremental analytics reads.
+5. Execute the version-controlled SQL model to build a gold revenue summary.
+6. Run named data quality expectations and persist their validation report.
+7. Write a pipeline manifest with source checksum, config, row counts, quality status, partition metadata, and output artifact paths for each run.
 
 ## Run Locally
 
@@ -80,8 +82,10 @@ Each successful run also writes:
 - `data_quality_report.json` with the overall validation status, source row
   count, and observed values for every expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, source file SHA-256,
-  included order statuses, bronze/silver/gold row counts, quality summary, and
-  generated artifact paths.
+  included order statuses, bronze/silver/gold row counts, silver partition
+  values, quality summary, and generated artifact paths.
+- `silver_orders_by_date/order_date=<YYYY-MM-DD>/silver_orders.csv` partition
+  files for date-scoped silver reads.
 
 The pipeline currently checks that the dataset is non-empty, required columns
 exist, order IDs are unique, and quantity and price are positive numbers.
@@ -89,7 +93,8 @@ exist, order IDs are unique, and quantity and price are positive numbers.
 ## Roadmap
 
 - Add PySpark version of the pipeline.
-- Add partitioned Parquet output.
+- [x] Add partitioned output.
+- Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.
 - Add Airflow DAG for orchestration.
 - [x] Add executable SQL model for gold transformations.

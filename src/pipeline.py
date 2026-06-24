@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -138,6 +139,27 @@ def write_layer(path, rows, fieldnames):
     LOGGER.info("Wrote %s rows to %s", len(rows), path)
 
 
+def write_partitioned_layer(base_dir, rows, fieldnames, partition_field, filename):
+    if base_dir.exists():
+        shutil.rmtree(base_dir)
+
+    partitions = {}
+    for row in rows:
+        partition_value = str(row[partition_field])
+        partitions.setdefault(partition_value, []).append(row)
+
+    for partition_value, partition_rows in sorted(partitions.items()):
+        partition_dir = base_dir / f"{partition_field}={partition_value}"
+        write_csv(partition_dir / filename, partition_rows, fieldnames)
+        LOGGER.info(
+            "Wrote %s rows to partition %s",
+            len(partition_rows),
+            partition_dir,
+        )
+
+    return sorted(partitions)
+
+
 def main(config_path=DEFAULT_CONFIG_PATH):
     logging.basicConfig(
         level=logging.INFO,
@@ -162,6 +184,13 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         "quantity", "unit_price", "revenue",
     ]
     write_layer(processed_dir / "silver_orders.csv", silver_rows, silver_fields)
+    silver_partitions = write_partitioned_layer(
+        processed_dir / "silver_orders_by_date",
+        silver_rows,
+        silver_fields,
+        "order_date",
+        "silver_orders.csv",
+    )
 
     gold_rows = build_gold_revenue(silver_rows)
     gold_fields = [
@@ -179,6 +208,13 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         gold_rows=gold_rows,
         quality_report=quality_report,
     )
+    manifest["artifacts"]["silver_orders_by_date"] = str(
+        processed_dir / "silver_orders_by_date"
+    )
+    manifest["layers"]["silver"]["partitions"] = {
+        "field": "order_date",
+        "values": silver_partitions,
+    }
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
