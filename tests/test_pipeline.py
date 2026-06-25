@@ -59,6 +59,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["config"] == {"included_statuses": ["delivered"]}
     assert manifest["layers"] == {
         "bronze": {"rows": 3},
+        "rejected": {
+            "rows": 1,
+            "reasons": {"status_not_included": 1},
+        },
         "silver": {
             "rows": 2,
             "partitions": {
@@ -72,6 +76,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["quality"] == {"success": True, "expectations": 4}
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
+        "rejected_orders": str(processed_dir / "rejected_orders.csv"),
         "silver_orders": str(processed_dir / "silver_orders.csv"),
         "silver_orders_by_date": str(processed_dir / "silver_orders_by_date"),
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
@@ -80,6 +85,19 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     }
 
     assert len(read_rows(processed_dir / "bronze_orders.csv")) == 3
+    assert read_rows(processed_dir / "rejected_orders.csv") == [
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Mouse",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "cancelled",
+            "rejection_reason": "status_not_included",
+        }
+    ]
     assert read_rows(processed_dir / "silver_orders.csv") == [
         {
             "order_id": "1001",

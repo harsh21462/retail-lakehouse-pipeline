@@ -1,6 +1,6 @@
 import pytest
 
-from src.pipeline import build_silver_orders, load_config
+from src.pipeline import build_silver_orders, build_silver_outputs, load_config
 from src.quality_checks import evaluate_quality, run_quality_checks
 
 
@@ -69,6 +69,41 @@ def test_silver_orders_use_configured_statuses():
 
     assert build_silver_orders(rows) == []
     assert build_silver_orders(rows, ["shipped"])[0]["revenue"] == 3000.0
+
+
+def test_silver_outputs_return_rejected_rows_with_reason():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "2500",
+            "status": "returned",
+        },
+    ]
+
+    silver_rows, rejected_rows = build_silver_outputs(rows, ["delivered"])
+
+    assert [row["order_id"] for row in silver_rows] == ["1001"]
+    assert rejected_rows == [
+        {
+            **rows[1],
+            "rejection_reason": "status_not_included",
+        }
+    ]
 
 
 def test_load_config_requires_all_keys(tmp_path):

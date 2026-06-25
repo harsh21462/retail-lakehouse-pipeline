@@ -1,4 +1,5 @@
 import csv
+from collections import Counter
 import hashlib
 import json
 import logging
@@ -68,12 +69,14 @@ def build_run_manifest(
     included_statuses,
     bronze_rows,
     silver_rows,
+    rejected_rows,
     gold_rows,
     customer_gold_rows,
     quality_report,
 ):
     artifacts = {
         "bronze_orders": processed_dir / "bronze_orders.csv",
+        "rejected_orders": processed_dir / "rejected_orders.csv",
         "silver_orders": processed_dir / "silver_orders.csv",
         "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
         "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
@@ -94,6 +97,16 @@ def build_run_manifest(
         },
         "layers": {
             "bronze": {"rows": len(bronze_rows)},
+            "rejected": {
+                "rows": len(rejected_rows),
+                "reasons": dict(
+                    sorted(
+                        Counter(
+                            row["rejection_reason"] for row in rejected_rows
+                        ).items()
+                    )
+                ),
+            },
             "silver": {"rows": len(silver_rows)},
             "gold": {"rows": len(gold_rows)},
             "gold_customer": {"rows": len(customer_gold_rows)},
@@ -106,17 +119,19 @@ def build_run_manifest(
     }
 
 
-def build_silver_orders(rows, included_statuses=("delivered",)):
+def build_silver_outputs(rows, included_statuses=("delivered",)):
     silver_rows = []
+    rejected_rows = []
     included_statuses = set(included_statuses)
 
     for row in rows:
+        if row["status"] not in included_statuses:
+            rejected_rows.append({**row, "rejection_reason": "status_not_included"})
+            continue
+
         quantity = int(row["quantity"])
         unit_price = float(row["unit_price"])
         revenue = quantity * unit_price
-
-        if row["status"] not in included_statuses:
-            continue
 
         silver_rows.append(
             {
@@ -131,6 +146,11 @@ def build_silver_orders(rows, included_statuses=("delivered",)):
             }
         )
 
+    return silver_rows, rejected_rows
+
+
+def build_silver_orders(rows, included_statuses=("delivered",)):
+    silver_rows, _ = build_silver_outputs(rows, included_statuses)
     return silver_rows
 
 
@@ -186,7 +206,16 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     write_layer(processed_dir / "bronze_orders.csv", bronze_rows, bronze_rows[0].keys())
 
-    silver_rows = build_silver_orders(bronze_rows, config["included_statuses"])
+    silver_rows, rejected_rows = build_silver_outputs(
+        bronze_rows,
+        config["included_statuses"],
+    )
+    rejected_fields = [*bronze_rows[0].keys(), "rejection_reason"]
+    write_layer(
+        processed_dir / "rejected_orders.csv",
+        rejected_rows,
+        rejected_fields,
+    )
     silver_fields = [
         "order_id", "customer_id", "order_date", "category", "product",
         "quantity", "unit_price", "revenue",
@@ -224,6 +253,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         included_statuses=config["included_statuses"],
         bronze_rows=bronze_rows,
         silver_rows=silver_rows,
+        rejected_rows=rejected_rows,
         gold_rows=gold_rows,
         customer_gold_rows=customer_gold_rows,
         quality_report=quality_report,
@@ -240,9 +270,13 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
 
     LOGGER.info(
-        "Pipeline completed: %s raw, %s silver, %s revenue gold, "
+        "Pipeline completed: %s raw, %s rejected, %s silver, %s revenue gold, "
         "and %s customer gold rows",
-        len(bronze_rows), len(silver_rows), len(gold_rows), len(customer_gold_rows),
+        len(bronze_rows),
+        len(rejected_rows),
+        len(silver_rows),
+        len(gold_rows),
+        len(customer_gold_rows),
     )
 
 
