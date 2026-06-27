@@ -2,6 +2,8 @@ import csv
 import hashlib
 import json
 
+import pyarrow.parquet as pq
+
 from src.pipeline import main
 
 
@@ -69,6 +71,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
                 "field": "order_date",
                 "values": ["2026-06-01", "2026-06-02"],
             },
+            "parquet_partitions": {
+                "field": "order_date",
+                "values": ["2026-06-01", "2026-06-02"],
+            },
         },
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
@@ -79,6 +85,9 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),
         "silver_orders": str(processed_dir / "silver_orders.csv"),
         "silver_orders_by_date": str(processed_dir / "silver_orders_by_date"),
+        "silver_orders_by_date_parquet": str(
+            processed_dir / "silver_orders_by_date_parquet"
+        ),
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
         "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
@@ -152,6 +161,27 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "quantity": "2",
             "unit_price": "2500.0",
             "revenue": "5000.0",
+        }
+    ]
+    parquet_rows = (
+        pq.read_table(
+            processed_dir
+            / "silver_orders_by_date_parquet"
+            / "order_date=2026-06-01"
+            / "silver_orders.parquet"
+        )
+        .to_pylist()
+    )
+    assert parquet_rows == [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": 2,
+            "unit_price": 1500.0,
+            "revenue": 3000.0,
         }
     ]
     assert read_rows(processed_dir / "gold_revenue_metrics.csv") == [

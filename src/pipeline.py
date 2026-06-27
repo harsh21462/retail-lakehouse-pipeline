@@ -188,6 +188,48 @@ def write_partitioned_layer(base_dir, rows, fieldnames, partition_field, filenam
     return sorted(partitions)
 
 
+def write_partitioned_parquet_layer(
+    base_dir,
+    rows,
+    schema_fields,
+    partition_field,
+    filename,
+):
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError(
+            "Parquet output requires pyarrow. Install requirements-dev.txt."
+        ) from exc
+
+    if base_dir.exists():
+        shutil.rmtree(base_dir)
+
+    partitions = {}
+    for row in rows:
+        partition_value = str(row[partition_field])
+        partitions.setdefault(partition_value, []).append(row)
+
+    schema = pa.schema(schema_fields)
+    for partition_value, partition_rows in sorted(partitions.items()):
+        partition_dir = base_dir / f"{partition_field}={partition_value}"
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        parquet_rows = [
+            {key: value for key, value in row.items() if key != partition_field}
+            for row in partition_rows
+        ]
+        table = pa.Table.from_pylist(parquet_rows, schema=schema)
+        pq.write_table(table, partition_dir / filename)
+        LOGGER.info(
+            "Wrote %s rows to parquet partition %s",
+            len(partition_rows),
+            partition_dir,
+        )
+
+    return sorted(partitions)
+
+
 def main(config_path=DEFAULT_CONFIG_PATH):
     logging.basicConfig(
         level=logging.INFO,
@@ -228,6 +270,22 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         "order_date",
         "silver_orders.csv",
     )
+    parquet_schema = [
+        ("order_id", "string"),
+        ("customer_id", "string"),
+        ("category", "string"),
+        ("product", "string"),
+        ("quantity", "int64"),
+        ("unit_price", "float64"),
+        ("revenue", "float64"),
+    ]
+    silver_parquet_partitions = write_partitioned_parquet_layer(
+        processed_dir / "silver_orders_by_date_parquet",
+        silver_rows,
+        parquet_schema,
+        "order_date",
+        "silver_orders.parquet",
+    )
 
     gold_rows = build_gold_revenue(silver_rows)
     gold_fields = [
@@ -261,9 +319,16 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     manifest["artifacts"]["silver_orders_by_date"] = str(
         processed_dir / "silver_orders_by_date"
     )
+    manifest["artifacts"]["silver_orders_by_date_parquet"] = str(
+        processed_dir / "silver_orders_by_date_parquet"
+    )
     manifest["layers"]["silver"]["partitions"] = {
         "field": "order_date",
         "values": silver_partitions,
+    }
+    manifest["layers"]["silver"]["parquet_partitions"] = {
+        "field": "order_date",
+        "values": silver_parquet_partitions,
     }
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)

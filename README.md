@@ -48,7 +48,7 @@ retail-lakehouse-pipeline/
 3. Build a silver dataset with cleaned types and valid rows.
 4. Write rejected orders that were valid raw records but excluded from silver
    by configuration, with an explicit rejection reason for auditability.
-5. Write the silver layer both as a flat CSV and as date-partitioned CSV
+5. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
 6. Execute version-controlled SQL models to build gold revenue and customer summaries.
 7. Run named data quality expectations and persist their validation report.
@@ -95,6 +95,8 @@ Each successful run also writes:
   and first/last order dates.
 - `silver_orders_by_date/order_date=<YYYY-MM-DD>/silver_orders.csv` partition
   files for date-scoped silver reads.
+- `silver_orders_by_date_parquet/order_date=<YYYY-MM-DD>/silver_orders.parquet`
+  partition files for columnar analytics reads.
 
 The pipeline currently checks that the dataset is non-empty, required columns
 exist, order IDs are unique, and quantity and price are positive numbers.
@@ -103,7 +105,7 @@ exist, order IDs are unique, and quantity and price are positive numbers.
 
 - Add PySpark version of the pipeline.
 - [x] Add partitioned output.
-- Add Parquet writer for partitioned outputs.
+- [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.
 - Add Airflow DAG for orchestration.
 - [x] Add executable SQL model for gold transformations.
