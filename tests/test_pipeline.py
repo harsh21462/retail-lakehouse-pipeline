@@ -47,6 +47,8 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "required_columns_are_present",
         "order_id_is_unique",
         "amounts_are_positive_numbers",
+        "order_dates_are_iso_dates",
+        "business_dimensions_are_populated",
     ]
 
     manifest = json.loads(
@@ -79,7 +81,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
     }
-    assert manifest["quality"] == {"success": True, "expectations": 4}
+    assert manifest["quality"] == {"success": True, "expectations": 6}
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),

@@ -1,4 +1,5 @@
 from collections import Counter
+from datetime import datetime
 
 
 REQUIRED_COLUMNS = [
@@ -15,6 +16,13 @@ REQUIRED_COLUMNS = [
 
 def _expectation(name, success, observed):
     return {"expectation": name, "success": success, "observed": observed}
+
+
+def _is_iso_date(value):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat() == value
+    except (TypeError, ValueError):
+        return False
 
 
 def evaluate_quality(rows):
@@ -37,6 +45,16 @@ def evaluate_quality(rows):
             if not valid:
                 invalid_amount_ids.append(row["order_id"])
 
+    invalid_date_ids = []
+    blank_dimension_ids = []
+    if not missing_columns:
+        dimension_columns = ["customer_id", "category", "product", "status"]
+        for row in rows:
+            if not _is_iso_date(row["order_date"]):
+                invalid_date_ids.append(row["order_id"])
+            if any(not str(row[column]).strip() for column in dimension_columns):
+                blank_dimension_ids.append(row["order_id"])
+
     expectations = [
         _expectation("dataset_is_not_empty", bool(rows), {"row_count": len(rows)}),
         _expectation(
@@ -53,6 +71,16 @@ def evaluate_quality(rows):
             "amounts_are_positive_numbers",
             not missing_columns and not invalid_amount_ids,
             {"invalid_order_ids": invalid_amount_ids},
+        ),
+        _expectation(
+            "order_dates_are_iso_dates",
+            not missing_columns and not invalid_date_ids,
+            {"invalid_order_ids": invalid_date_ids},
+        ),
+        _expectation(
+            "business_dimensions_are_populated",
+            not missing_columns and not blank_dimension_ids,
+            {"invalid_order_ids": blank_dimension_ids},
         ),
     ]
     return {

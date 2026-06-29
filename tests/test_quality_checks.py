@@ -148,3 +148,39 @@ def test_quality_report_identifies_all_failed_expectations():
     assert results["amounts_are_positive_numbers"]["observed"] == {
         "invalid_order_ids": ["1001"]
     }
+
+
+def test_quality_report_rejects_invalid_dates_and_blank_dimensions():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "06/01/2026",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": " ",
+            "order_date": "2026-06-01",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "delivered",
+        },
+    ]
+
+    report = evaluate_quality(rows)
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["order_dates_are_iso_dates"]["observed"] == {
+        "invalid_order_ids": ["1001"]
+    }
+    assert results["business_dimensions_are_populated"]["observed"] == {
+        "invalid_order_ids": ["1002"]
+    }
