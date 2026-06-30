@@ -230,6 +230,39 @@ def write_partitioned_parquet_layer(
     return sorted(partitions)
 
 
+def build_partition_inventory(
+    rows,
+    partition_field,
+    csv_base_dir,
+    csv_filename,
+    parquet_base_dir,
+    parquet_filename,
+):
+    partitions = {}
+    for row in rows:
+        partition_value = str(row[partition_field])
+        partitions.setdefault(partition_value, 0)
+        partitions[partition_value] += 1
+
+    return [
+        {
+            "value": partition_value,
+            "rows": row_count,
+            "csv_path": str(
+                csv_base_dir
+                / f"{partition_field}={partition_value}"
+                / csv_filename
+            ),
+            "parquet_path": str(
+                parquet_base_dir
+                / f"{partition_field}={partition_value}"
+                / parquet_filename
+            ),
+        }
+        for partition_value, row_count in sorted(partitions.items())
+    ]
+
+
 def main(config_path=DEFAULT_CONFIG_PATH):
     logging.basicConfig(
         level=logging.INFO,
@@ -330,6 +363,14 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         "field": "order_date",
         "values": silver_parquet_partitions,
     }
+    manifest["layers"]["silver"]["partition_inventory"] = build_partition_inventory(
+        silver_rows,
+        "order_date",
+        processed_dir / "silver_orders_by_date",
+        "silver_orders.csv",
+        processed_dir / "silver_orders_by_date_parquet",
+        "silver_orders.parquet",
+    )
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)

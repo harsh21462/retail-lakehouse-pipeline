@@ -52,7 +52,7 @@ retail-lakehouse-pipeline/
    folders for incremental analytics reads.
 6. Execute version-controlled SQL models to build gold revenue and customer summaries.
 7. Run named data quality expectations and persist their validation report.
-8. Write a pipeline manifest with source checksum, config, row counts, quality status, rejection reason counts, partition metadata, and output artifact paths for each run.
+8. Write a pipeline manifest with source checksum, config, row counts, quality status, rejection reason counts, partition inventory, and output artifact paths for each run.
 
 ## Run Locally
 
@@ -87,8 +87,8 @@ Each successful run also writes:
   count, and observed values for every expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, source file SHA-256,
   included order statuses, bronze/silver/gold row counts, silver partition
-  values, rejection reason counts, customer metric row counts, quality summary,
-  and generated artifact paths.
+  values, per-partition row counts and file paths, rejection reason counts,
+  customer metric row counts, quality summary, and generated artifact paths.
 - `rejected_orders.csv` with valid raw orders excluded from the silver layer by
   configured status and an explicit `rejection_reason`.
 - `gold_customer_metrics.csv` with customer-level order count, units, revenue,

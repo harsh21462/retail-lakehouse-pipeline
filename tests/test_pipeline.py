@@ -77,6 +77,40 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
                 "field": "order_date",
                 "values": ["2026-06-01", "2026-06-02"],
             },
+            "partition_inventory": [
+                {
+                    "value": "2026-06-01",
+                    "rows": 1,
+                    "csv_path": str(
+                        processed_dir
+                        / "silver_orders_by_date"
+                        / "order_date=2026-06-01"
+                        / "silver_orders.csv"
+                    ),
+                    "parquet_path": str(
+                        processed_dir
+                        / "silver_orders_by_date_parquet"
+                        / "order_date=2026-06-01"
+                        / "silver_orders.parquet"
+                    ),
+                },
+                {
+                    "value": "2026-06-02",
+                    "rows": 1,
+                    "csv_path": str(
+                        processed_dir
+                        / "silver_orders_by_date"
+                        / "order_date=2026-06-02"
+                        / "silver_orders.csv"
+                    ),
+                    "parquet_path": str(
+                        processed_dir
+                        / "silver_orders_by_date_parquet"
+                        / "order_date=2026-06-02"
+                        / "silver_orders.parquet"
+                    ),
+                },
+            ],
         },
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
