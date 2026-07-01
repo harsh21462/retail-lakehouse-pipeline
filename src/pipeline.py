@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from .quality_checks import run_quality_checks
+    from .quality_checks import evaluate_quality, raise_for_failed_quality
     from .sql_transforms import run_gold_model, run_gold_revenue_model
 except ImportError:  # Support direct execution with `python src/pipeline.py`.
-    from quality_checks import run_quality_checks
+    from quality_checks import evaluate_quality, raise_for_failed_quality
     from sql_transforms import run_gold_model, run_gold_revenue_model
 
 
@@ -274,10 +274,11 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     LOGGER.info("Starting pipeline with source %s", raw_path)
     bronze_rows = read_csv(raw_path)
-    quality_report = run_quality_checks(bronze_rows)
+    quality_report = evaluate_quality(bronze_rows)
     quality_report_path = processed_dir / "data_quality_report.json"
     write_json(quality_report_path, quality_report)
     LOGGER.info("Wrote data quality report to %s", quality_report_path)
+    raise_for_failed_quality(quality_report)
 
     write_layer(processed_dir / "bronze_orders.csv", bronze_rows, bronze_rows[0].keys())
 

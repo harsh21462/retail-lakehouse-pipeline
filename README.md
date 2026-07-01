@@ -69,6 +69,9 @@ troubleshooting.
 Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated
 temporary input and verifies the generated bronze, silver, and gold datasets.
+If a data quality expectation fails, the pipeline writes
+`data_quality_report.json` before stopping so the failed run still has a
+diagnostic artifact.
 
 The gold layers are defined in `sql/gold_revenue_metrics.sql` and
 `sql/gold_customer_metrics.sql`. The pipeline loads the cleaned silver rows into

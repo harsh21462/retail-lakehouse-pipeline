@@ -92,6 +92,11 @@ def evaluate_quality(rows):
 
 def run_quality_checks(rows):
     report = evaluate_quality(rows)
+    raise_for_failed_quality(report)
+    return report
+
+
+def raise_for_failed_quality(report):
     failed = [
         result["expectation"]
         for result in report["expectations"]
@@ -99,4 +104,3 @@ def run_quality_checks(rows):
     ]
     if failed:
         raise ValueError(f"Data quality checks failed: {', '.join(failed)}")
-    return report

@@ -3,6 +3,7 @@ import hashlib
 import json
 
 import pyarrow.parquet as pq
+import pytest
 
 from src.pipeline import main
 
@@ -256,3 +257,38 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "last_order_date": "2026-06-01",
         },
     ]
+
+
+def test_pipeline_persists_quality_report_before_failing(tmp_path):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,not-a-number,1500,delivered\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="amounts_are_positive_numbers"):
+        main(config_path)
+
+    quality_report = json.loads(
+        (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
+    )
+    results = {item["expectation"]: item for item in quality_report["expectations"]}
+    assert quality_report["success"] is False
+    assert results["amounts_are_positive_numbers"]["observed"] == {
+        "invalid_order_ids": ["1001"]
+    }
+    assert not (processed_dir / "bronze_orders.csv").exists()
