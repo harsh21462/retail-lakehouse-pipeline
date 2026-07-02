@@ -1,6 +1,12 @@
 import pytest
 
-from src.pipeline import build_silver_orders, build_silver_outputs, load_config
+from src.pipeline import (
+    build_silver_orders,
+    build_silver_outputs,
+    build_silver_profile,
+    build_source_profile,
+    load_config,
+)
 from src.quality_checks import evaluate_quality, run_quality_checks
 
 
@@ -104,6 +110,64 @@ def test_silver_outputs_return_rejected_rows_with_reason():
             "rejection_reason": "status_not_included",
         }
     ]
+
+
+def test_manifest_profiles_handle_empty_and_populated_rows():
+    raw_rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-02",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-01",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "2500",
+            "status": "returned",
+        },
+    ]
+    silver_rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-02",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": 2,
+            "unit_price": 1500.0,
+            "revenue": 3000.0,
+        }
+    ]
+
+    assert build_source_profile(raw_rows) == {
+        "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
+        "status_counts": {"delivered": 1, "returned": 1},
+    }
+    assert build_silver_profile(silver_rows) == {
+        "order_date_range": {"min": "2026-06-02", "max": "2026-06-02"},
+        "customers": 1,
+        "categories": 1,
+        "total_revenue": 3000.0,
+    }
+    assert build_source_profile([]) == {
+        "order_date_range": {"min": None, "max": None},
+        "status_counts": {},
+    }
+    assert build_silver_profile([]) == {
+        "order_date_range": {"min": None, "max": None},
+        "customers": 0,
+        "categories": 0,
+        "total_revenue": 0,
+    }
 
 
 def test_load_config_requires_all_keys(tmp_path):

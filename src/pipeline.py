@@ -62,6 +62,31 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+def _date_range(rows):
+    dates = sorted({row["order_date"] for row in rows})
+    if not dates:
+        return {"min": None, "max": None}
+    return {"min": dates[0], "max": dates[-1]}
+
+
+def build_source_profile(rows):
+    return {
+        "order_date_range": _date_range(rows),
+        "status_counts": dict(
+            sorted(Counter(row["status"] for row in rows).items())
+        ),
+    }
+
+
+def build_silver_profile(rows):
+    return {
+        "order_date_range": _date_range(rows),
+        "customers": len({row["customer_id"] for row in rows}),
+        "categories": len({row["category"] for row in rows}),
+        "total_revenue": round(sum(row["revenue"] for row in rows), 2),
+    }
+
+
 def build_run_manifest(
     *,
     raw_path,
@@ -91,6 +116,7 @@ def build_run_manifest(
             "path": str(raw_path),
             "sha256": file_sha256(raw_path),
             "rows": len(bronze_rows),
+            "profile": build_source_profile(bronze_rows),
         },
         "config": {
             "included_statuses": list(included_statuses),
@@ -107,7 +133,10 @@ def build_run_manifest(
                     )
                 ),
             },
-            "silver": {"rows": len(silver_rows)},
+            "silver": {
+                "rows": len(silver_rows),
+                "profile": build_silver_profile(silver_rows),
+            },
             "gold": {"rows": len(gold_rows)},
             "gold_customer": {"rows": len(customer_gold_rows)},
         },
