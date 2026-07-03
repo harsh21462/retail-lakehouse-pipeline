@@ -5,12 +5,42 @@ import json
 import pyarrow.parquet as pq
 import pytest
 
-from src.pipeline import main
+from src.pipeline import main, write_csv, write_json
 
 
 def read_rows(path):
     with path.open(newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
+
+
+def test_csv_writer_preserves_existing_artifact_when_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "orders.csv"
+    output_path.write_text("order_id\nexisting\n", encoding="utf-8")
+
+    def fail_writerows(self, rows):
+        raise OSError("simulated disk failure")
+
+    monkeypatch.setattr(csv.DictWriter, "writerows", fail_writerows)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        write_csv(output_path, [{"order_id": "1001"}], ["order_id"])
+
+    assert output_path.read_text(encoding="utf-8") == "order_id\nexisting\n"
+    assert list(tmp_path.glob(".orders.csv.*.tmp")) == []
+
+
+def test_json_writer_preserves_existing_artifact_when_serialization_fails(tmp_path):
+    output_path = tmp_path / "pipeline_manifest.json"
+    output_path.write_text('{"status": "previous"}\n', encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        write_json(output_path, {"bad_value": object()})
+
+    assert output_path.read_text(encoding="utf-8") == '{"status": "previous"}\n'
+    assert list(tmp_path.glob(".pipeline_manifest.json.*.tmp")) == []
 
 
 def test_pipeline_writes_expected_lakehouse_layers(tmp_path):

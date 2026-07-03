@@ -54,6 +54,10 @@ retail-lakehouse-pipeline/
 7. Run named data quality expectations and persist their validation report.
 8. Write a pipeline manifest with source checksum, config, row counts, quality status, source and silver data profiles, rejection reason counts, partition inventory, and output artifact paths for each run.
 
+CSV and JSON artifacts are written through same-directory temporary files and
+atomically replaced when the write succeeds, so a failed run does not leave
+half-written metadata or table files for downstream readers.
+
 ## Run Locally
 
 ```bash
