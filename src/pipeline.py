@@ -33,6 +33,43 @@ def load_config(path=DEFAULT_CONFIG_PATH):
     if missing:
         raise ValueError(f"Missing configuration keys: {sorted(missing)}")
 
+    path_keys = ["raw_path", "processed_dir"]
+    invalid_path_keys = [
+        key
+        for key in path_keys
+        if not isinstance(config[key], str) or not config[key].strip()
+    ]
+    if invalid_path_keys:
+        raise ValueError(
+            "Configuration keys must be non-empty strings: "
+            f"{invalid_path_keys}"
+        )
+
+    included_statuses = config["included_statuses"]
+    if (
+        not isinstance(included_statuses, list)
+        or not included_statuses
+        or any(
+            not isinstance(status, str) or not status.strip()
+            for status in included_statuses
+        )
+    ):
+        raise ValueError(
+            "Configuration key 'included_statuses' must be a non-empty list "
+            "of non-empty strings"
+        )
+
+    duplicate_statuses = sorted(
+        status
+        for status, count in Counter(included_statuses).items()
+        if count > 1
+    )
+    if duplicate_statuses:
+        raise ValueError(
+            "Configuration key 'included_statuses' contains duplicate "
+            f"values: {duplicate_statuses}"
+        )
+
     return config
 
 

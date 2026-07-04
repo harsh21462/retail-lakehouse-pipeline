@@ -178,6 +178,51 @@ def test_load_config_requires_all_keys(tmp_path):
         load_config(config_path)
 
 
+def test_load_config_rejects_non_list_included_statuses(tmp_path):
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": "delivered"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-empty list"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_blank_and_duplicate_statuses(tmp_path):
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered", " ", "delivered"]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-empty list"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered", "delivered"]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_blank_paths(tmp_path):
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(
+        '{"raw_path": "", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-empty strings"):
+        load_config(config_path)
+
+
 def test_quality_report_identifies_all_failed_expectations():
     rows = [
         {
