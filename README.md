@@ -111,9 +111,10 @@ Each successful run also writes:
   partition files for columnar analytics reads.
 
 The pipeline currently checks that the dataset is non-empty, required columns
-exist, order IDs are unique, quantity and price are positive numbers, order
-dates use `YYYY-MM-DD`, and key business dimensions are populated before rows
-are partitioned or aggregated.
+exist, raw CSV rows are well formed with no missing or extra fields, order IDs
+are unique, quantity and price are positive numbers, order dates use
+`YYYY-MM-DD`, and key business dimensions are populated before rows are
+partitioned or aggregated.
 
 ## Roadmap
 

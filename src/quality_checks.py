@@ -25,10 +25,24 @@ def _is_iso_date(value):
         return False
 
 
+def _is_blank(value):
+    return value is None or not str(value).strip()
+
+
 def evaluate_quality(rows):
     """Evaluate the raw order data and return a machine-readable report."""
     columns = list(rows[0]) if rows else []
     missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
+    extra_field_ids = []
+    missing_field_ids = []
+    if not missing_columns:
+        for index, row in enumerate(rows, start=1):
+            row_id = row.get("order_id") or f"row_{index}"
+            if None in row:
+                extra_field_ids.append(row_id)
+            if any(row.get(column) is None for column in REQUIRED_COLUMNS):
+                missing_field_ids.append(row_id)
+
     duplicate_ids = sorted(
         order_id
         for order_id, count in Counter(row.get("order_id") for row in rows).items()
@@ -52,7 +66,7 @@ def evaluate_quality(rows):
         for row in rows:
             if not _is_iso_date(row["order_date"]):
                 invalid_date_ids.append(row["order_id"])
-            if any(not str(row[column]).strip() for column in dimension_columns):
+            if any(_is_blank(row[column]) for column in dimension_columns):
                 blank_dimension_ids.append(row["order_id"])
 
     expectations = [
@@ -61,6 +75,14 @@ def evaluate_quality(rows):
             "required_columns_are_present",
             not missing_columns,
             {"missing_columns": missing_columns},
+        ),
+        _expectation(
+            "rows_are_well_formed",
+            not missing_columns and not extra_field_ids and not missing_field_ids,
+            {
+                "extra_field_order_ids": extra_field_ids,
+                "missing_field_order_ids": missing_field_ids,
+            },
         ),
         _expectation(
             "order_id_is_unique",

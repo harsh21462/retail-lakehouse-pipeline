@@ -293,3 +293,41 @@ def test_quality_report_rejects_invalid_dates_and_blank_dimensions():
     assert results["business_dimensions_are_populated"]["observed"] == {
         "invalid_order_ids": ["1002"]
     }
+
+
+def test_quality_report_rejects_malformed_csv_rows():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+            None: ["unexpected"],
+        },
+        {
+            "order_id": "1002",
+            "customer_id": None,
+            "order_date": "2026-06-01",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "delivered",
+        },
+    ]
+
+    report = evaluate_quality(rows)
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["rows_are_well_formed"]["observed"] == {
+        "extra_field_order_ids": ["1001"],
+        "missing_field_order_ids": ["1002"],
+    }
+    assert results["business_dimensions_are_populated"]["observed"] == {
+        "invalid_order_ids": ["1002"]
+    }
