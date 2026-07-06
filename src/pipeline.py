@@ -362,6 +362,35 @@ def build_partition_inventory(
     ]
 
 
+def _artifact_file_paths(path):
+    if path.is_file():
+        return [path]
+    if path.is_dir():
+        return sorted(item for item in path.rglob("*") if item.is_file())
+    return []
+
+
+def build_artifact_inventory(artifacts):
+    inventory = {}
+    for name, path in sorted(artifacts.items()):
+        artifact_path = Path(path)
+        files = _artifact_file_paths(artifact_path)
+        artifact_type = "missing"
+        if artifact_path.is_dir():
+            artifact_type = "directory"
+        elif artifact_path.is_file():
+            artifact_type = "file"
+
+        inventory[name] = {
+            "path": str(artifact_path),
+            "exists": artifact_path.exists(),
+            "type": artifact_type,
+            "files": len(files),
+            "bytes": sum(file_path.stat().st_size for file_path in files),
+        }
+    return inventory
+
+
 def main(config_path=DEFAULT_CONFIG_PATH):
     logging.basicConfig(
         level=logging.INFO,
@@ -470,6 +499,12 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         "silver_orders.csv",
         processed_dir / "silver_orders_by_date_parquet",
         "silver_orders.parquet",
+    )
+    manifest["artifact_inventory"] = build_artifact_inventory(
+        {
+            name: Path(path)
+            for name, path in manifest["artifacts"].items()
+        }
     )
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)

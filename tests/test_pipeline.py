@@ -170,6 +170,26 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
     }
+    assert set(manifest["artifact_inventory"]) == set(manifest["artifacts"])
+    for artifact_name, artifact_stats in manifest["artifact_inventory"].items():
+        assert artifact_stats["path"] == manifest["artifacts"][artifact_name]
+        assert artifact_stats["exists"] is True
+        assert artifact_stats["bytes"] > 0
+    assert manifest["artifact_inventory"]["silver_orders"]["type"] == "file"
+    assert manifest["artifact_inventory"]["silver_orders"]["files"] == 1
+    assert (
+        manifest["artifact_inventory"]["silver_orders_by_date"]["type"]
+        == "directory"
+    )
+    assert manifest["artifact_inventory"]["silver_orders_by_date"]["files"] == 2
+    assert (
+        manifest["artifact_inventory"]["silver_orders_by_date_parquet"]["type"]
+        == "directory"
+    )
+    assert (
+        manifest["artifact_inventory"]["silver_orders_by_date_parquet"]["files"]
+        == 2
+    )
 
     assert len(read_rows(processed_dir / "bronze_orders.csv")) == 3
     assert read_rows(processed_dir / "rejected_orders.csv") == [

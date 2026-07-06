@@ -1,6 +1,7 @@
 import pytest
 
 from src.pipeline import (
+    build_artifact_inventory,
     build_silver_orders,
     build_silver_outputs,
     build_silver_profile,
@@ -167,6 +168,48 @@ def test_manifest_profiles_handle_empty_and_populated_rows():
         "customers": 0,
         "categories": 0,
         "total_revenue": 0,
+    }
+
+
+def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path):
+    file_path = tmp_path / "silver_orders.csv"
+    file_path.write_text("order_id\n1001\n", encoding="utf-8")
+    directory_path = tmp_path / "silver_orders_by_date"
+    partition_path = directory_path / "order_date=2026-06-01"
+    partition_path.mkdir(parents=True)
+    (partition_path / "silver_orders.csv").write_text(
+        "order_id\n1001\n",
+        encoding="utf-8",
+    )
+
+    inventory = build_artifact_inventory(
+        {
+            "silver_orders": file_path,
+            "silver_orders_by_date": directory_path,
+            "missing_report": tmp_path / "missing.json",
+        }
+    )
+
+    assert inventory["silver_orders"] == {
+        "path": str(file_path),
+        "exists": True,
+        "type": "file",
+        "files": 1,
+        "bytes": file_path.stat().st_size,
+    }
+    assert inventory["silver_orders_by_date"] == {
+        "path": str(directory_path),
+        "exists": True,
+        "type": "directory",
+        "files": 1,
+        "bytes": (partition_path / "silver_orders.csv").stat().st_size,
+    }
+    assert inventory["missing_report"] == {
+        "path": str(tmp_path / "missing.json"),
+        "exists": False,
+        "type": "missing",
+        "files": 0,
+        "bytes": 0,
     }
 
 
