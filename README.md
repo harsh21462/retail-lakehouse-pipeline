@@ -52,7 +52,7 @@ retail-lakehouse-pipeline/
    folders for incremental analytics reads.
 6. Execute version-controlled SQL models to build gold revenue and customer summaries.
 7. Run named data quality expectations and persist their validation report.
-8. Write a pipeline manifest with source checksum, config, row counts, quality status, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
+8. Write a pipeline manifest with run timing and resolved paths, source checksum, config, row counts, quality status, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -95,12 +95,13 @@ Each successful run also writes:
 
 - `data_quality_report.json` with the overall validation status, source row
   count, and observed values for every expectation.
-- `pipeline_manifest.json` with the UTC run timestamp, source file SHA-256,
-  included order statuses, bronze/silver/gold row counts, source status counts
-  and order date range, silver customer/category/revenue profile, silver
-  partition values, per-partition row counts and file paths, rejection reason
-  counts, customer metric row counts, quality summary, generated artifact
-  paths, and per-artifact existence/type/file-count/byte-size metadata.
+- `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
+  source and output paths, elapsed runtime, source file SHA-256, included order
+  statuses, bronze/silver/gold row counts, source status counts and order date
+  range, silver customer/category/revenue profile, silver partition values,
+  per-partition row counts and file paths, rejection reason counts, customer
+  metric row counts, quality summary, generated artifact paths, and
+  per-artifact existence/type/file-count/byte-size metadata.
 - `rejected_orders.csv` with valid raw orders excluded from the silver layer by
   configured status and an explicit `rejection_reason`.
 - `gold_customer_metrics.csv` with customer-level order count, units, revenue,

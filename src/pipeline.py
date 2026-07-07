@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -159,6 +160,10 @@ def build_silver_profile(rows):
 
 def build_run_manifest(
     *,
+    config_path,
+    started_at_utc,
+    completed_at_utc,
+    duration_ms,
     raw_path,
     processed_dir,
     included_statuses,
@@ -182,6 +187,14 @@ def build_run_manifest(
         "generated_at_utc": datetime.now(timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
+        "run": {
+            "config_path": str(config_path),
+            "raw_path": str(raw_path),
+            "processed_dir": str(processed_dir),
+            "started_at_utc": started_at_utc,
+            "completed_at_utc": completed_at_utc,
+            "duration_ms": duration_ms,
+        },
         "source": {
             "path": str(raw_path),
             "sha256": file_sha256(raw_path),
@@ -392,10 +405,13 @@ def build_artifact_inventory(artifacts):
 
 
 def main(config_path=DEFAULT_CONFIG_PATH):
+    started_at = datetime.now(timezone.utc)
+    started_at_monotonic = time.perf_counter()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
+    config_path = Path(config_path)
     config = load_config(config_path)
     raw_path = ROOT / config["raw_path"]
     processed_dir = ROOT / config["processed_dir"]
@@ -468,6 +484,12 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
 
     manifest = build_run_manifest(
+        config_path=config_path.resolve(),
+        started_at_utc=started_at.isoformat().replace("+00:00", "Z"),
+        completed_at_utc=datetime.now(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),
         raw_path=raw_path,
         processed_dir=processed_dir,
         included_statuses=config["included_statuses"],
