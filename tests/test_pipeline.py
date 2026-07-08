@@ -77,6 +77,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "dataset_is_not_empty",
         "required_columns_are_present",
         "rows_are_well_formed",
+        "order_ids_are_populated",
         "order_id_is_unique",
         "amounts_are_positive_numbers",
         "order_dates_are_iso_dates",
@@ -163,7 +164,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
     }
-    assert manifest["quality"] == {"success": True, "expectations": 7}
+    assert manifest["quality"] == {"success": True, "expectations": 8}
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),

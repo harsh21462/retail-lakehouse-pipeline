@@ -113,7 +113,7 @@ Each successful run also writes:
 
 The pipeline currently checks that the dataset is non-empty, required columns
 exist, raw CSV rows are well formed with no missing or extra fields, order IDs
-are unique, quantity and price are positive numbers, order dates use
+are populated and unique, quantity and price are positive numbers, order dates use
 `YYYY-MM-DD`, and key business dimensions are populated before rows are
 partitioned or aggregated.
 
