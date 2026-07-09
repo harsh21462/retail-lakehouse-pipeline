@@ -70,8 +70,10 @@ Pipeline paths and included order statuses are configured in
 `config/pipeline.json`. The pipeline validates that paths are non-empty strings
 and `included_statuses` is a non-empty list of unique, non-empty strings before
 reading source data, so bad operational config fails fast instead of silently
-rejecting every order. Each run emits progress logs for operation and
-troubleshooting.
+rejecting every order. Relative `raw_path` and `processed_dir` values are
+resolved from the project root, while absolute paths are preserved. That keeps
+scheduled runs deterministic even when they start from a different working
+directory. Each run emits progress logs for operation and troubleshooting.
 
 Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated

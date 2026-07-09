@@ -74,6 +74,13 @@ def load_config(path=DEFAULT_CONFIG_PATH):
     return config
 
 
+def resolve_pipeline_path(path_value, base_dir=ROOT):
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return base_dir / path
+
+
 def read_csv(path):
     with path.open(newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
@@ -413,8 +420,8 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     config_path = Path(config_path)
     config = load_config(config_path)
-    raw_path = ROOT / config["raw_path"]
-    processed_dir = ROOT / config["processed_dir"]
+    raw_path = resolve_pipeline_path(config["raw_path"])
+    processed_dir = resolve_pipeline_path(config["processed_dir"])
 
     LOGGER.info("Starting pipeline with source %s", raw_path)
     bronze_rows = read_csv(raw_path)

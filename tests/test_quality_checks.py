@@ -7,6 +7,7 @@ from src.pipeline import (
     build_silver_profile,
     build_source_profile,
     load_config,
+    resolve_pipeline_path,
 )
 from src.quality_checks import evaluate_quality, run_quality_checks
 
@@ -264,6 +265,20 @@ def test_load_config_rejects_blank_paths(tmp_path):
 
     with pytest.raises(ValueError, match="non-empty strings"):
         load_config(config_path)
+
+
+def test_resolve_pipeline_path_anchors_relative_paths_to_project_root(tmp_path):
+    assert resolve_pipeline_path("data/raw/orders.csv", base_dir=tmp_path) == (
+        tmp_path / "data" / "raw" / "orders.csv"
+    )
+
+
+def test_resolve_pipeline_path_preserves_absolute_paths(tmp_path):
+    absolute_path = tmp_path / "orders.csv"
+
+    assert resolve_pipeline_path(absolute_path, base_dir=tmp_path / "ignored") == (
+        absolute_path
+    )
 
 
 def test_quality_report_identifies_all_failed_expectations():
