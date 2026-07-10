@@ -62,7 +62,7 @@ half-written metadata or table files for downstream readers.
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python src/pipeline.py
+python src/pipeline.py --config config/pipeline.json
 python -m pytest -q
 ```
 
@@ -73,7 +73,9 @@ reading source data, so bad operational config fails fast instead of silently
 rejecting every order. Relative `raw_path` and `processed_dir` values are
 resolved from the project root, while absolute paths are preserved. That keeps
 scheduled runs deterministic even when they start from a different working
-directory. Each run emits progress logs for operation and troubleshooting.
+directory. Pass `--config` to run the same executable entrypoint with an
+environment-specific config file for CI, backfills, or scheduled jobs. Each run
+emits progress logs for operation and troubleshooting.
 
 Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated

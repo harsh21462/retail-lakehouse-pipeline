@@ -1,3 +1,4 @@
+import argparse
 import csv
 from collections import Counter
 import hashlib
@@ -550,5 +551,26 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Run the retail lakehouse pipeline."
+    )
+    parser.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        type=Path,
+        help=(
+            "Path to pipeline config JSON. Defaults to "
+            f"{DEFAULT_CONFIG_PATH}."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    main(args.config)
+
+
 if __name__ == "__main__":
-    main()
+    cli()

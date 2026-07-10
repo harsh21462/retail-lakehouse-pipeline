@@ -5,12 +5,39 @@ import json
 import pyarrow.parquet as pq
 import pytest
 
-from src.pipeline import main, write_csv, write_json
+from src.pipeline import (
+    DEFAULT_CONFIG_PATH,
+    cli,
+    main,
+    parse_args,
+    write_csv,
+    write_json,
+)
 
 
 def read_rows(path):
     with path.open(newline="", encoding="utf-8") as file:
         return list(csv.DictReader(file))
+
+
+def test_cli_uses_default_config_path_when_not_overridden():
+    args = parse_args([])
+
+    assert args.config == DEFAULT_CONFIG_PATH
+
+
+def test_cli_accepts_config_path_override(tmp_path, monkeypatch):
+    config_path = tmp_path / "pipeline.json"
+    called_with = []
+
+    def fake_main(path):
+        called_with.append(path)
+
+    monkeypatch.setattr("src.pipeline.main", fake_main)
+
+    cli(["--config", str(config_path)])
+
+    assert called_with == [config_path]
 
 
 def test_csv_writer_preserves_existing_artifact_when_write_fails(
