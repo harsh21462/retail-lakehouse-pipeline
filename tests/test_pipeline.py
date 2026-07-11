@@ -10,6 +10,8 @@ from src.pipeline import (
     cli,
     main,
     parse_args,
+    write_partitioned_layer,
+    write_partitioned_parquet_layer,
     write_csv,
     write_json,
 )
@@ -68,6 +70,73 @@ def test_json_writer_preserves_existing_artifact_when_serialization_fails(tmp_pa
 
     assert output_path.read_text(encoding="utf-8") == '{"status": "previous"}\n'
     assert list(tmp_path.glob(".pipeline_manifest.json.*.tmp")) == []
+
+
+def test_partitioned_csv_writer_preserves_existing_directory_when_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    base_dir = tmp_path / "silver_orders_by_date"
+    existing_partition = base_dir / "order_date=2026-06-01"
+    existing_partition.mkdir(parents=True)
+    existing_file = existing_partition / "silver_orders.csv"
+    existing_file.write_text(
+        "order_id,order_date\nexisting,2026-06-01\n",
+        encoding="utf-8",
+    )
+
+    def fail_writerows(self, rows):
+        raise OSError("simulated partition failure")
+
+    monkeypatch.setattr(csv.DictWriter, "writerows", fail_writerows)
+
+    with pytest.raises(OSError, match="simulated partition failure"):
+        write_partitioned_layer(
+            base_dir,
+            [{"order_id": "1001", "order_date": "2026-06-02"}],
+            ["order_id", "order_date"],
+            "order_date",
+            "silver_orders.csv",
+        )
+
+    assert existing_file.read_text(encoding="utf-8") == (
+        "order_id,order_date\nexisting,2026-06-01\n"
+    )
+    assert list(tmp_path.glob(".silver_orders_by_date.staged.*")) == []
+
+
+def test_partitioned_parquet_writer_preserves_existing_directory_when_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    base_dir = tmp_path / "silver_orders_by_date_parquet"
+    existing_partition = base_dir / "order_date=2026-06-01"
+    existing_partition.mkdir(parents=True)
+    existing_file = existing_partition / "silver_orders.parquet"
+    existing_file.write_bytes(b"previous parquet bytes")
+
+    def fail_write_table(table, path):
+        raise OSError("simulated parquet failure")
+
+    monkeypatch.setattr(pq, "write_table", fail_write_table)
+
+    with pytest.raises(OSError, match="simulated parquet failure"):
+        write_partitioned_parquet_layer(
+            base_dir,
+            [
+                {
+                    "order_id": "1001",
+                    "order_date": "2026-06-02",
+                    "quantity": 2,
+                }
+            ],
+            [("order_id", "string"), ("quantity", "int64")],
+            "order_date",
+            "silver_orders.parquet",
+        )
+
+    assert existing_file.read_bytes() == b"previous parquet bytes"
+    assert list(tmp_path.glob(".silver_orders_by_date_parquet.staged.*")) == []
 
 
 def test_pipeline_writes_expected_lakehouse_layers(tmp_path):

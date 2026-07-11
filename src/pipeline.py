@@ -287,23 +287,65 @@ def write_layer(path, rows, fieldnames):
     LOGGER.info("Wrote %s rows to %s", len(rows), path)
 
 
+def replace_directory_after_success(target_dir, staged_dir):
+    """Replace a directory with a fully written staged directory."""
+    target_dir = Path(target_dir)
+    staged_dir = Path(staged_dir)
+    backup_dir = None
+
+    if target_dir.exists():
+        backup_dir = Path(
+            tempfile.mkdtemp(
+                dir=target_dir.parent,
+                prefix=f".{target_dir.name}.backup.",
+            )
+        )
+        backup_dir.rmdir()
+        target_dir.rename(backup_dir)
+
+    try:
+        staged_dir.rename(target_dir)
+    except Exception:
+        if backup_dir is not None and backup_dir.exists() and not target_dir.exists():
+            backup_dir.rename(target_dir)
+        raise
+    finally:
+        if backup_dir is not None and backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+
+def make_staged_directory(target_dir):
+    target_dir = Path(target_dir)
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    return Path(
+        tempfile.mkdtemp(
+            dir=target_dir.parent,
+            prefix=f".{target_dir.name}.staged.",
+        )
+    )
+
+
 def write_partitioned_layer(base_dir, rows, fieldnames, partition_field, filename):
-    if base_dir.exists():
-        shutil.rmtree(base_dir)
+    staged_dir = make_staged_directory(base_dir)
 
     partitions = {}
     for row in rows:
         partition_value = str(row[partition_field])
         partitions.setdefault(partition_value, []).append(row)
 
-    for partition_value, partition_rows in sorted(partitions.items()):
-        partition_dir = base_dir / f"{partition_field}={partition_value}"
-        write_csv(partition_dir / filename, partition_rows, fieldnames)
-        LOGGER.info(
-            "Wrote %s rows to partition %s",
-            len(partition_rows),
-            partition_dir,
-        )
+    try:
+        for partition_value, partition_rows in sorted(partitions.items()):
+            partition_dir = staged_dir / f"{partition_field}={partition_value}"
+            write_csv(partition_dir / filename, partition_rows, fieldnames)
+            LOGGER.info(
+                "Wrote %s rows to staged partition %s",
+                len(partition_rows),
+                partition_dir,
+            )
+        replace_directory_after_success(base_dir, staged_dir)
+    except Exception:
+        shutil.rmtree(staged_dir, ignore_errors=True)
+        raise
 
     return sorted(partitions)
 
@@ -323,8 +365,7 @@ def write_partitioned_parquet_layer(
             "Parquet output requires pyarrow. Install requirements-dev.txt."
         ) from exc
 
-    if base_dir.exists():
-        shutil.rmtree(base_dir)
+    staged_dir = make_staged_directory(base_dir)
 
     partitions = {}
     for row in rows:
@@ -332,20 +373,25 @@ def write_partitioned_parquet_layer(
         partitions.setdefault(partition_value, []).append(row)
 
     schema = pa.schema(schema_fields)
-    for partition_value, partition_rows in sorted(partitions.items()):
-        partition_dir = base_dir / f"{partition_field}={partition_value}"
-        partition_dir.mkdir(parents=True, exist_ok=True)
-        parquet_rows = [
-            {key: value for key, value in row.items() if key != partition_field}
-            for row in partition_rows
-        ]
-        table = pa.Table.from_pylist(parquet_rows, schema=schema)
-        pq.write_table(table, partition_dir / filename)
-        LOGGER.info(
-            "Wrote %s rows to parquet partition %s",
-            len(partition_rows),
-            partition_dir,
-        )
+    try:
+        for partition_value, partition_rows in sorted(partitions.items()):
+            partition_dir = staged_dir / f"{partition_field}={partition_value}"
+            partition_dir.mkdir(parents=True, exist_ok=True)
+            parquet_rows = [
+                {key: value for key, value in row.items() if key != partition_field}
+                for row in partition_rows
+            ]
+            table = pa.Table.from_pylist(parquet_rows, schema=schema)
+            pq.write_table(table, partition_dir / filename)
+            LOGGER.info(
+                "Wrote %s rows to staged parquet partition %s",
+                len(partition_rows),
+                partition_dir,
+            )
+        replace_directory_after_success(base_dir, staged_dir)
+    except Exception:
+        shutil.rmtree(staged_dir, ignore_errors=True)
+        raise
 
     return sorted(partitions)
 

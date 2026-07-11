@@ -57,6 +57,9 @@ retail-lakehouse-pipeline/
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
 half-written metadata or table files for downstream readers.
+Partitioned CSV and Parquet directories are also built in same-parent staging
+directories and swapped into place only after every partition file is written,
+preserving the previous complete partition set if a partition write fails.
 
 ## Run Locally
 
