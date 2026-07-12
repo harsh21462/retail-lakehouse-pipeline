@@ -33,6 +33,76 @@ def test_quality_checks_pass_for_valid_rows():
     assert all(result["success"] for result in report["expectations"])
 
 
+def test_quality_checks_validate_included_status_coverage():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "cancelled",
+        }
+    ]
+
+    report = evaluate_quality(rows, included_statuses=["delivered"])
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["included_statuses_match_source_rows"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "matching_rows": 0,
+        "matching_status_counts": {},
+    }
+
+
+def test_quality_checks_report_matching_included_status_counts():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-01",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "shipped",
+        },
+        {
+            "order_id": "1003",
+            "customer_id": "C003",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Desk",
+            "quantity": "1",
+            "unit_price": "1200",
+            "status": "cancelled",
+        },
+    ]
+
+    report = evaluate_quality(rows, included_statuses=["delivered", "shipped"])
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is True
+    assert results["included_statuses_match_source_rows"]["observed"] == {
+        "included_statuses": ["delivered", "shipped"],
+        "matching_rows": 2,
+        "matching_status_counts": {"delivered": 1, "shipped": 1},
+    }
+
+
 def test_quality_checks_fail_for_duplicate_order_id():
     rows = [
         {

@@ -472,7 +472,10 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     LOGGER.info("Starting pipeline with source %s", raw_path)
     bronze_rows = read_csv(raw_path)
-    quality_report = evaluate_quality(bronze_rows)
+    quality_report = evaluate_quality(
+        bronze_rows,
+        included_statuses=config["included_statuses"],
+    )
     quality_report_path = processed_dir / "data_quality_report.json"
     write_json(quality_report_path, quality_report)
     LOGGER.info("Wrote data quality report to %s", quality_report_path)

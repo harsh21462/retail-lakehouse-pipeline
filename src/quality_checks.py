@@ -36,7 +36,7 @@ def _row_identifier(row, index):
     return order_id
 
 
-def evaluate_quality(rows):
+def evaluate_quality(rows, included_statuses=None):
     """Evaluate the raw order data and return a machine-readable report."""
     columns = list(rows[0]) if rows else []
     missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
@@ -83,6 +83,27 @@ def evaluate_quality(rows):
             if any(_is_blank(row[column]) for column in dimension_columns):
                 blank_dimension_ids.append(row_id)
 
+    status_coverage_expectation = []
+    if included_statuses is not None:
+        included_status_set = set(included_statuses)
+        status_counts = Counter(
+            row.get("status")
+            for row in rows
+            if row.get("status") in included_status_set
+        )
+        matching_rows = sum(status_counts.values())
+        status_coverage_expectation.append(
+            _expectation(
+                "included_statuses_match_source_rows",
+                not missing_columns and matching_rows > 0,
+                {
+                    "included_statuses": list(included_statuses),
+                    "matching_rows": matching_rows,
+                    "matching_status_counts": dict(sorted(status_counts.items())),
+                },
+            )
+        )
+
     expectations = [
         _expectation("dataset_is_not_empty", bool(rows), {"row_count": len(rows)}),
         _expectation(
@@ -123,6 +144,7 @@ def evaluate_quality(rows):
             not missing_columns and not blank_dimension_ids,
             {"invalid_order_ids": blank_dimension_ids},
         ),
+        *status_coverage_expectation,
     ]
     return {
         "success": all(result["success"] for result in expectations),
@@ -131,8 +153,8 @@ def evaluate_quality(rows):
     }
 
 
-def run_quality_checks(rows):
-    report = evaluate_quality(rows)
+def run_quality_checks(rows, included_statuses=None):
+    report = evaluate_quality(rows, included_statuses)
     raise_for_failed_quality(report)
     return report
 

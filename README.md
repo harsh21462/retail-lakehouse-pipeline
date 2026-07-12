@@ -51,7 +51,9 @@ retail-lakehouse-pipeline/
 5. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
 6. Execute version-controlled SQL models to build gold revenue and customer summaries.
-7. Run named data quality expectations and persist their validation report.
+7. Run named data quality expectations, including a config-aware check that
+   included order statuses match at least one source row, and persist their
+   validation report.
 8. Write a pipeline manifest with run timing and resolved paths, source checksum, config, row counts, quality status, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
 
 CSV and JSON artifacts are written through same-directory temporary files and
@@ -121,8 +123,9 @@ Each successful run also writes:
 The pipeline currently checks that the dataset is non-empty, required columns
 exist, raw CSV rows are well formed with no missing or extra fields, order IDs
 are populated and unique, quantity and price are positive numbers, order dates use
-`YYYY-MM-DD`, and key business dimensions are populated before rows are
-partitioned or aggregated.
+`YYYY-MM-DD`, key business dimensions are populated, and configured included
+statuses match at least one source row before rows are partitioned or
+aggregated.
 
 ## Roadmap
 

@@ -178,6 +178,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "amounts_are_positive_numbers",
         "order_dates_are_iso_dates",
         "business_dimensions_are_populated",
+        "included_statuses_match_source_rows",
     ]
 
     manifest = json.loads(
@@ -260,7 +261,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
     }
-    assert manifest["quality"] == {"success": True, "expectations": 8}
+    assert manifest["quality"] == {"success": True, "expectations": 9}
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),
@@ -456,3 +457,41 @@ def test_pipeline_persists_quality_report_before_failing(tmp_path):
         "invalid_order_ids": ["1001"]
     }
     assert not (processed_dir / "bronze_orders.csv").exists()
+
+
+def test_pipeline_fails_when_configured_statuses_match_no_source_rows(tmp_path):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,cancelled\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="included_statuses_match_source_rows"):
+        main(config_path)
+
+    quality_report = json.loads(
+        (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
+    )
+    results = {item["expectation"]: item for item in quality_report["expectations"]}
+    assert quality_report["success"] is False
+    assert results["included_statuses_match_source_rows"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "matching_rows": 0,
+        "matching_status_counts": {},
+    }
+    assert not (processed_dir / "bronze_orders.csv").exists()
+    assert not (processed_dir / "silver_orders.csv").exists()
