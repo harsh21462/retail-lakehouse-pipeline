@@ -2,11 +2,13 @@ import pytest
 
 from src.pipeline import (
     build_artifact_inventory,
+    build_row_count_reconciliation,
     build_silver_orders,
     build_silver_outputs,
     build_silver_profile,
     build_source_profile,
     load_config,
+    raise_for_failed_reconciliation,
     resolve_pipeline_path,
 )
 from src.quality_checks import evaluate_quality, run_quality_checks
@@ -182,6 +184,36 @@ def test_silver_outputs_return_rejected_rows_with_reason():
             "rejection_reason": "status_not_included",
         }
     ]
+
+
+def test_row_count_reconciliation_accounts_for_silver_and_rejected_rows():
+    reconciliation = build_row_count_reconciliation(
+        bronze_rows=[{"order_id": "1001"}, {"order_id": "1002"}],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[{"order_id": "1002"}],
+    )
+
+    assert reconciliation == {
+        "success": True,
+        "bronze_rows": 2,
+        "silver_rows": 1,
+        "rejected_rows": 1,
+        "accounted_rows": 2,
+        "difference": 0,
+    }
+
+
+def test_row_count_reconciliation_fails_on_unaccounted_rows():
+    reconciliation = build_row_count_reconciliation(
+        bronze_rows=[{"order_id": "1001"}, {"order_id": "1002"}],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[],
+    )
+
+    assert reconciliation["success"] is False
+    assert reconciliation["difference"] == 1
+    with pytest.raises(ValueError, match="Row count reconciliation failed"):
+        raise_for_failed_reconciliation(reconciliation)
 
 
 def test_manifest_profiles_handle_empty_and_populated_rows():

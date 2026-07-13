@@ -48,13 +48,15 @@ retail-lakehouse-pipeline/
 3. Build a silver dataset with cleaned types and valid rows.
 4. Write rejected orders that were valid raw records but excluded from silver
    by configuration, with an explicit rejection reason for auditability.
-5. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
+5. Reconcile bronze rows against silver plus rejected rows so silent row loss
+   or double-counting fails the run before downstream layers are written.
+6. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
-6. Execute version-controlled SQL models to build gold revenue and customer summaries.
-7. Run named data quality expectations, including a config-aware check that
+7. Execute version-controlled SQL models to build gold revenue and customer summaries.
+8. Run named data quality expectations, including a config-aware check that
    included order statuses match at least one source row, and persist their
    validation report.
-8. Write a pipeline manifest with run timing and resolved paths, source checksum, config, row counts, quality status, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
+9. Write a pipeline manifest with run timing and resolved paths, source checksum, config, row counts, quality status, row count reconciliation, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -107,9 +109,10 @@ Each successful run also writes:
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
   source and output paths, elapsed runtime, source file SHA-256, included order
   statuses, bronze/silver/gold row counts, source status counts and order date
-  range, silver customer/category/revenue profile, silver partition values,
-  per-partition row counts and file paths, rejection reason counts, customer
-  metric row counts, quality summary, generated artifact paths, and
+  range, silver customer/category/revenue profile, bronze-to-silver/rejected row
+  count reconciliation, silver partition values, per-partition row counts and
+  file paths, rejection reason counts, customer metric row counts, quality
+  summary, generated artifact paths, and
   per-artifact existence/type/file-count/byte-size metadata.
 - `rejected_orders.csv` with valid raw orders excluded from the silver layer by
   configured status and an explicit `rejection_reason`.

@@ -262,6 +262,14 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_customer": {"rows": 2},
     }
     assert manifest["quality"] == {"success": True, "expectations": 9}
+    assert manifest["reconciliation"] == {
+        "success": True,
+        "bronze_rows": 3,
+        "silver_rows": 2,
+        "rejected_rows": 1,
+        "accounted_rows": 3,
+        "difference": 0,
+    }
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),
@@ -494,4 +502,41 @@ def test_pipeline_fails_when_configured_statuses_match_no_source_rows(tmp_path):
         "matching_status_counts": {},
     }
     assert not (processed_dir / "bronze_orders.csv").exists()
+    assert not (processed_dir / "silver_orders.csv").exists()
+
+
+def test_pipeline_fails_when_silver_reconciliation_does_not_balance(
+    tmp_path,
+    monkeypatch,
+):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def drop_all_rows(rows, included_statuses):
+        return [], []
+
+    monkeypatch.setattr("src.pipeline.build_silver_outputs", drop_all_rows)
+
+    with pytest.raises(ValueError, match="Row count reconciliation failed"):
+        main(config_path)
+
+    assert (processed_dir / "data_quality_report.json").exists()
+    assert not (processed_dir / "rejected_orders.csv").exists()
     assert not (processed_dir / "silver_orders.csv").exists()

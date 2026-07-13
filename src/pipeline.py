@@ -235,6 +235,11 @@ def build_run_manifest(
             "success": quality_report["success"],
             "expectations": len(quality_report["expectations"]),
         },
+        "reconciliation": build_row_count_reconciliation(
+            bronze_rows,
+            silver_rows,
+            rejected_rows,
+        ),
         "artifacts": {name: str(path) for name, path in artifacts.items()},
     }
 
@@ -267,6 +272,30 @@ def build_silver_outputs(rows, included_statuses=("delivered",)):
         )
 
     return silver_rows, rejected_rows
+
+
+def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
+    bronze_count = len(bronze_rows)
+    silver_count = len(silver_rows)
+    rejected_count = len(rejected_rows)
+    accounted_count = silver_count + rejected_count
+    return {
+        "success": bronze_count == accounted_count,
+        "bronze_rows": bronze_count,
+        "silver_rows": silver_count,
+        "rejected_rows": rejected_count,
+        "accounted_rows": accounted_count,
+        "difference": bronze_count - accounted_count,
+    }
+
+
+def raise_for_failed_reconciliation(reconciliation):
+    if not reconciliation["success"]:
+        raise ValueError(
+            "Row count reconciliation failed: "
+            f"{reconciliation['bronze_rows']} bronze rows but "
+            f"{reconciliation['accounted_rows']} accounted rows"
+        )
 
 
 def build_silver_orders(rows, included_statuses=("delivered",)):
@@ -486,6 +515,9 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     silver_rows, rejected_rows = build_silver_outputs(
         bronze_rows,
         config["included_statuses"],
+    )
+    raise_for_failed_reconciliation(
+        build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows)
     )
     rejected_fields = [*bronze_rows[0].keys(), "rejection_reason"]
     write_layer(
