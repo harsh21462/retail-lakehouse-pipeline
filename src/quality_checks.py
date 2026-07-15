@@ -40,6 +40,9 @@ def evaluate_quality(rows, included_statuses=None):
     """Evaluate the raw order data and return a machine-readable report."""
     columns = list(rows[0]) if rows else []
     missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
+    unexpected_columns = sorted(
+        column for column in set(columns) - set(REQUIRED_COLUMNS) if column is not None
+    )
     extra_field_ids = []
     missing_field_ids = []
     if not missing_columns:
@@ -110,6 +113,14 @@ def evaluate_quality(rows, included_statuses=None):
             "required_columns_are_present",
             not missing_columns,
             {"missing_columns": missing_columns},
+        ),
+        _expectation(
+            "raw_schema_matches_contract",
+            not missing_columns and not unexpected_columns,
+            {
+                "required_columns": REQUIRED_COLUMNS,
+                "unexpected_columns": unexpected_columns,
+            },
         ),
         _expectation(
             "rows_are_well_formed",

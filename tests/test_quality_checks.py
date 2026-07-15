@@ -527,3 +527,38 @@ def test_quality_report_rejects_malformed_csv_rows():
     assert results["business_dimensions_are_populated"]["observed"] == {
         "invalid_order_ids": ["1002"]
     }
+
+
+def test_quality_report_rejects_unexpected_raw_columns():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+            "coupon_code": "WELCOME10",
+        }
+    ]
+
+    report = evaluate_quality(rows)
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["raw_schema_matches_contract"]["observed"] == {
+        "required_columns": [
+            "order_id",
+            "customer_id",
+            "order_date",
+            "category",
+            "product",
+            "quantity",
+            "unit_price",
+            "status",
+        ],
+        "unexpected_columns": ["coupon_code"],
+    }
+    assert results["rows_are_well_formed"]["success"] is True

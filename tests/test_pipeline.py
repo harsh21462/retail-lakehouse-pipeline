@@ -172,6 +172,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert [item["expectation"] for item in quality_report["expectations"]] == [
         "dataset_is_not_empty",
         "required_columns_are_present",
+        "raw_schema_matches_contract",
         "rows_are_well_formed",
         "order_ids_are_populated",
         "order_id_is_unique",
@@ -261,7 +262,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
     }
-    assert manifest["quality"] == {"success": True, "expectations": 9}
+    assert manifest["quality"] == {"success": True, "expectations": 10}
     assert manifest["reconciliation"] == {
         "success": True,
         "bronze_rows": 3,

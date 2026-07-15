@@ -123,9 +123,10 @@ Each successful run also writes:
 - `silver_orders_by_date_parquet/order_date=<YYYY-MM-DD>/silver_orders.parquet`
   partition files for columnar analytics reads.
 
-The pipeline currently checks that the dataset is non-empty, required columns
-exist, raw CSV rows are well formed with no missing or extra fields, order IDs
-are populated and unique, quantity and price are positive numbers, order dates use
+The pipeline currently checks that the dataset is non-empty, the raw schema
+matches the expected order contract with no missing or unexpected named columns,
+raw CSV rows are well formed with no missing or extra fields, order IDs are
+populated and unique, quantity and price are positive numbers, order dates use
 `YYYY-MM-DD`, key business dimensions are populated, and configured included
 statuses match at least one source row before rows are partitioned or
 aggregated.
