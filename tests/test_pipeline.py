@@ -200,6 +200,12 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
             "status_counts": {"cancelled": 1, "delivered": 2},
         },
+        "ingestion": {
+            "classification": "new_source_file",
+            "previously_seen": False,
+            "run_count_for_source": 1,
+            "known_paths_for_source": [str(raw_path)],
+        },
     }
     assert manifest["config"] == {"included_statuses": ["delivered"]}
     assert manifest["layers"] == {
@@ -282,6 +288,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
         "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
+        "ingestion_history": str(processed_dir / "ingestion_history.json"),
     }
     assert set(manifest["artifact_inventory"]) == set(manifest["artifacts"])
     for artifact_name, artifact_stats in manifest["artifact_inventory"].items():
@@ -303,6 +310,23 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         manifest["artifact_inventory"]["silver_orders_by_date_parquet"]["files"]
         == 2
     )
+
+    ingestion_history = json.loads(
+        (processed_dir / "ingestion_history.json").read_text(encoding="utf-8")
+    )
+    assert ingestion_history == {
+        "version": 1,
+        "sources": [
+            {
+                "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+                "first_seen_at_utc": manifest["run"]["completed_at_utc"],
+                "last_seen_at_utc": manifest["run"]["completed_at_utc"],
+                "run_count": 1,
+                "rows": 3,
+                "paths": [str(raw_path)],
+            }
+        ],
+    }
 
     assert len(read_rows(processed_dir / "bronze_orders.csv")) == 3
     assert read_rows(processed_dir / "rejected_orders.csv") == [
@@ -541,3 +565,58 @@ def test_pipeline_fails_when_silver_reconciliation_does_not_balance(
     assert (processed_dir / "data_quality_report.json").exists()
     assert not (processed_dir / "rejected_orders.csv").exists()
     assert not (processed_dir / "silver_orders.csv").exists()
+    assert not (processed_dir / "ingestion_history.json").exists()
+
+
+def test_pipeline_marks_repeated_source_content_from_new_path(tmp_path):
+    first_raw_path = tmp_path / "raw" / "orders.csv"
+    second_raw_path = tmp_path / "backfill" / "orders-copy.csv"
+    processed_dir = tmp_path / "processed"
+    first_config_path = tmp_path / "first-pipeline.json"
+    second_config_path = tmp_path / "second-pipeline.json"
+    first_raw_path.parent.mkdir()
+    second_raw_path.parent.mkdir()
+    raw_content = (
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered\n"
+    )
+    first_raw_path.write_text(raw_content, encoding="utf-8")
+    second_raw_path.write_text(raw_content, encoding="utf-8")
+    first_config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(first_raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    second_config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(second_raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(first_config_path)
+    main(second_config_path)
+
+    manifest = json.loads(
+        (processed_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["source"]["ingestion"] == {
+        "classification": "repeated_content_new_path",
+        "previously_seen": True,
+        "run_count_for_source": 2,
+        "known_paths_for_source": [str(second_raw_path), str(first_raw_path)],
+    }
+    history = json.loads(
+        (processed_dir / "ingestion_history.json").read_text(encoding="utf-8")
+    )
+    assert history["sources"][0]["run_count"] == 2
+    assert history["sources"][0]["paths"] == [str(second_raw_path), str(first_raw_path)]

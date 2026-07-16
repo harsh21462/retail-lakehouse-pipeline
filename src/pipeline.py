@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
 GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
 GOLD_CUSTOMER_SQL_PATH = ROOT / "sql" / "gold_customer_metrics.sql"
+INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -141,6 +142,63 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+def load_ingestion_history(path):
+    path = Path(path)
+    if not path.exists():
+        return {"version": 1, "sources": []}
+
+    with path.open(encoding="utf-8") as file:
+        history = json.load(file)
+
+    if history.get("version") != 1 or not isinstance(history.get("sources"), list):
+        raise ValueError(f"Unsupported ingestion history format: {path}")
+    return history
+
+
+def update_ingestion_history(history, *, source_path, source_sha256, rows, seen_at_utc):
+    sources = history.setdefault("sources", [])
+    source_path = str(source_path)
+    matching_source = None
+    for source in sources:
+        if source.get("sha256") == source_sha256:
+            matching_source = source
+            break
+
+    if matching_source is None:
+        matching_source = {
+            "sha256": source_sha256,
+            "first_seen_at_utc": seen_at_utc,
+            "last_seen_at_utc": seen_at_utc,
+            "run_count": 0,
+            "rows": rows,
+            "paths": [],
+        }
+        sources.append(matching_source)
+        classification = "new_source_file"
+    elif source_path in matching_source.get("paths", []):
+        classification = "repeated_source_file"
+    else:
+        classification = "repeated_content_new_path"
+
+    paths = sorted({*matching_source.get("paths", []), source_path})
+    matching_source.update(
+        {
+            "last_seen_at_utc": seen_at_utc,
+            "run_count": int(matching_source.get("run_count", 0)) + 1,
+            "rows": rows,
+            "paths": paths,
+        }
+    )
+    history["sources"] = sorted(sources, key=lambda source: source["sha256"])
+
+    return {
+        "classification": classification,
+        "previously_seen": classification != "new_source_file",
+        "run_count_for_source": matching_source["run_count"],
+        "known_paths_for_source": paths,
+    }
+
+
 def _date_range(rows):
     dates = sorted({row["order_date"] for row in rows})
     if not dates:
@@ -173,6 +231,8 @@ def build_run_manifest(
     completed_at_utc,
     duration_ms,
     raw_path,
+    source_sha256,
+    ingestion_event,
     processed_dir,
     included_statuses,
     bronze_rows,
@@ -189,6 +249,7 @@ def build_run_manifest(
         "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
         "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
+        "ingestion_history": processed_dir / INGESTION_HISTORY_FILENAME,
     }
 
     return {
@@ -205,9 +266,10 @@ def build_run_manifest(
         },
         "source": {
             "path": str(raw_path),
-            "sha256": file_sha256(raw_path),
+            "sha256": source_sha256,
             "rows": len(bronze_rows),
             "profile": build_source_profile(bronze_rows),
+            "ingestion": ingestion_event,
         },
         "config": {
             "included_statuses": list(included_statuses),
@@ -501,6 +563,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     LOGGER.info("Starting pipeline with source %s", raw_path)
     bronze_rows = read_csv(raw_path)
+    source_sha256 = file_sha256(raw_path)
     quality_report = evaluate_quality(
         bronze_rows,
         included_statuses=config["included_statuses"],
@@ -572,14 +635,31 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         customer_gold_fields,
     )
 
+    completed_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    ingestion_history_path = processed_dir / INGESTION_HISTORY_FILENAME
+    ingestion_history = load_ingestion_history(ingestion_history_path)
+    ingestion_event = update_ingestion_history(
+        ingestion_history,
+        source_path=raw_path,
+        source_sha256=source_sha256,
+        rows=len(bronze_rows),
+        seen_at_utc=completed_at_utc,
+    )
+    write_json(ingestion_history_path, ingestion_history)
+    LOGGER.info(
+        "Updated ingestion history at %s with %s",
+        ingestion_history_path,
+        ingestion_event["classification"],
+    )
+
     manifest = build_run_manifest(
         config_path=config_path.resolve(),
         started_at_utc=started_at.isoformat().replace("+00:00", "Z"),
-        completed_at_utc=datetime.now(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        completed_at_utc=completed_at_utc,
         duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),
         raw_path=raw_path,
+        source_sha256=source_sha256,
+        ingestion_event=ingestion_event,
         processed_dir=processed_dir,
         included_statuses=config["included_statuses"],
         bronze_rows=bronze_rows,

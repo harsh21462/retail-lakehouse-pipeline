@@ -56,7 +56,13 @@ retail-lakehouse-pipeline/
 8. Run named data quality expectations, including a config-aware check that
    included order statuses match at least one source row, and persist their
    validation report.
-9. Write a pipeline manifest with run timing and resolved paths, source checksum, config, row counts, quality status, row count reconciliation, source and silver data profiles, rejection reason counts, partition inventory, output artifact paths, and artifact size inventory for each run.
+9. Update an ingestion history keyed by source file checksum so repeated
+   source files are visible even when they arrive under a different path.
+10. Write a pipeline manifest with run timing and resolved paths, source
+   checksum, source ingestion classification, config, row counts, quality
+   status, row count reconciliation, source and silver data profiles,
+   rejection reason counts, partition inventory, output artifact paths, and
+   artifact size inventory for each run.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -108,12 +114,18 @@ Each successful run also writes:
   count, and observed values for every expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
   source and output paths, elapsed runtime, source file SHA-256, included order
-  statuses, bronze/silver/gold row counts, source status counts and order date
-  range, silver customer/category/revenue profile, bronze-to-silver/rejected row
-  count reconciliation, silver partition values, per-partition row counts and
-  file paths, rejection reason counts, customer metric row counts, quality
-  summary, generated artifact paths, and
+  statuses, source ingestion classification (`new_source_file`,
+  `repeated_source_file`, or `repeated_content_new_path`),
+  bronze/silver/gold row counts, source status counts and order date range,
+  silver customer/category/revenue profile, bronze-to-silver/rejected row count
+  reconciliation, silver partition values, per-partition row counts and file
+  paths, rejection reason counts, customer metric row counts, quality summary,
+  generated artifact paths, and
   per-artifact existence/type/file-count/byte-size metadata.
+- `ingestion_history.json` with every successfully processed source checksum,
+  first/last seen timestamps, run count, row count, and known source paths.
+  Failed quality or reconciliation runs do not update this history, which keeps
+  it from certifying bad batches as processed.
 - `rejected_orders.csv` with valid raw orders excluded from the silver layer by
   configured status and an explicit `rejection_reason`.
 - `gold_customer_metrics.csv` with customer-level order count, units, revenue,

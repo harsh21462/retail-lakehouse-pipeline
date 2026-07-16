@@ -2,6 +2,7 @@ import pytest
 
 from src.pipeline import (
     build_artifact_inventory,
+    load_ingestion_history,
     build_row_count_reconciliation,
     build_silver_orders,
     build_silver_outputs,
@@ -10,6 +11,8 @@ from src.pipeline import (
     load_config,
     raise_for_failed_reconciliation,
     resolve_pipeline_path,
+    update_ingestion_history,
+    write_json,
 )
 from src.quality_checks import evaluate_quality, run_quality_checks
 
@@ -314,6 +317,70 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "files": 0,
         "bytes": 0,
     }
+
+
+def test_ingestion_history_classifies_new_and_repeated_sources():
+    history = {"version": 1, "sources": []}
+
+    first_event = update_ingestion_history(
+        history,
+        source_path="/data/raw/orders.csv",
+        source_sha256="abc123",
+        rows=10,
+        seen_at_utc="2026-07-16T01:00:00Z",
+    )
+    second_event = update_ingestion_history(
+        history,
+        source_path="/data/raw/orders.csv",
+        source_sha256="abc123",
+        rows=10,
+        seen_at_utc="2026-07-16T02:00:00Z",
+    )
+    renamed_event = update_ingestion_history(
+        history,
+        source_path="/data/backfill/orders-copy.csv",
+        source_sha256="abc123",
+        rows=10,
+        seen_at_utc="2026-07-16T03:00:00Z",
+    )
+
+    assert first_event == {
+        "classification": "new_source_file",
+        "previously_seen": False,
+        "run_count_for_source": 1,
+        "known_paths_for_source": ["/data/raw/orders.csv"],
+    }
+    assert second_event["classification"] == "repeated_source_file"
+    assert renamed_event == {
+        "classification": "repeated_content_new_path",
+        "previously_seen": True,
+        "run_count_for_source": 3,
+        "known_paths_for_source": [
+            "/data/backfill/orders-copy.csv",
+            "/data/raw/orders.csv",
+        ],
+    }
+    assert history["sources"] == [
+        {
+            "sha256": "abc123",
+            "first_seen_at_utc": "2026-07-16T01:00:00Z",
+            "last_seen_at_utc": "2026-07-16T03:00:00Z",
+            "run_count": 3,
+            "rows": 10,
+            "paths": [
+                "/data/backfill/orders-copy.csv",
+                "/data/raw/orders.csv",
+            ],
+        }
+    ]
+
+
+def test_load_ingestion_history_rejects_unknown_format(tmp_path):
+    history_path = tmp_path / "ingestion_history.json"
+    write_json(history_path, {"version": 99, "sources": []})
+
+    with pytest.raises(ValueError, match="Unsupported ingestion history format"):
+        load_ingestion_history(history_path)
 
 
 def test_load_config_requires_all_keys(tmp_path):
