@@ -28,6 +28,8 @@ retail-lakehouse-pipeline/
 |-- sql/
 |   |-- gold_customer_metrics.sql
 |   `-- gold_revenue_metrics.sql
+|-- dags/
+|   `-- retail_lakehouse_dag.py
 |-- src/
 |   |-- pipeline.py
 |   |-- quality_checks.py
@@ -63,6 +65,8 @@ retail-lakehouse-pipeline/
    status, row count reconciliation, source and silver data profiles,
    rejection reason counts, partition inventory, output artifact paths, and
    artifact size inventory for each run.
+11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
+   DAG in `dags/retail_lakehouse_dag.py`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -101,6 +105,22 @@ The gold layers are defined in `sql/gold_revenue_metrics.sql` and
 `sql/gold_customer_metrics.sql`. The pipeline loads the cleaned silver rows into
 an in-memory SQLite table and executes those models, so the SQL artifacts are
 tested and used in every local and CI pipeline run.
+
+## Airflow Scheduling
+
+`dags/retail_lakehouse_dag.py` defines a daily Airflow DAG named
+`retail_lakehouse_daily`. It calls the same CLI entrypoint used locally:
+
+```bash
+python src/pipeline.py --config config/pipeline.json
+```
+
+The DAG file is safe to import in environments where Airflow is not installed,
+which keeps local pytest and lightweight CI jobs from depending on an Airflow
+runtime. In an Airflow deployment, set `RETAIL_LAKEHOUSE_PROJECT_ROOT` if the
+repository is mounted somewhere other than the DAG file's parent project
+directory, and set `RETAIL_LAKEHOUSE_PYTHON_BIN` if the scheduler should use a
+specific virtualenv interpreter.
 
 Output files are written to:
 
@@ -149,7 +169,7 @@ aggregated.
 - [x] Add partitioned output.
 - [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.
-- Add Airflow DAG for orchestration.
+- [x] Add Airflow DAG for orchestration.
 - [x] Add executable SQL model for gold transformations.
 - Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
