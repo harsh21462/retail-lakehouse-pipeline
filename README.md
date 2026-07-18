@@ -47,7 +47,8 @@ retail-lakehouse-pipeline/
 
 1. Read raw retail orders from `data/raw/orders.csv`.
 2. Write a bronze copy with minimal changes.
-3. Build a silver dataset with cleaned types and valid rows.
+3. Build a silver dataset with cleaned types and valid rows, optionally scoped
+   to a configured order-date window for backfills or incremental runs.
 4. Write rejected orders that were valid raw records but excluded from silver
    by configuration, with an explicit rejection reason for auditability.
 5. Reconcile bronze rows against silver plus rejected rows so silent row loss
@@ -55,9 +56,9 @@ retail-lakehouse-pipeline/
 6. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
 7. Execute version-controlled SQL models to build gold revenue and customer summaries.
-8. Run named data quality expectations, including a config-aware check that
-   included order statuses match at least one source row, and persist their
-   validation report.
+8. Run named data quality expectations, including config-aware checks that
+   included order statuses and any configured order-date window match at least
+   one source row, and persist their validation report.
 9. Update an ingestion history keyed by source file checksum so repeated
    source files are visible even when they arrive under a different path.
 10. Write a pipeline manifest with run timing and resolved paths, source
@@ -83,16 +84,30 @@ python src/pipeline.py --config config/pipeline.json
 python -m pytest -q
 ```
 
-Pipeline paths and included order statuses are configured in
-`config/pipeline.json`. The pipeline validates that paths are non-empty strings
-and `included_statuses` is a non-empty list of unique, non-empty strings before
-reading source data, so bad operational config fails fast instead of silently
-rejecting every order. Relative `raw_path` and `processed_dir` values are
+Pipeline paths, included order statuses, and optional order date bounds are
+configured in `config/pipeline.json`. The pipeline validates that paths are
+non-empty strings and `included_statuses` is a non-empty list of unique,
+non-empty strings before reading source data. Optional `order_date_start` and
+`order_date_end` values must use `YYYY-MM-DD`, and the start must be on or
+before the end. Bad operational config fails fast instead of silently rejecting
+every order. Relative `raw_path` and `processed_dir` values are
 resolved from the project root, while absolute paths are preserved. That keeps
 scheduled runs deterministic even when they start from a different working
 directory. Pass `--config` to run the same executable entrypoint with an
 environment-specific config file for CI, backfills, or scheduled jobs. Each run
 emits progress logs for operation and troubleshooting.
+
+Example windowed backfill config:
+
+```json
+{
+  "raw_path": "data/raw/orders.csv",
+  "processed_dir": "data/processed",
+  "included_statuses": ["delivered"],
+  "order_date_start": "2026-06-01",
+  "order_date_end": "2026-06-30"
+}
+```
 
 Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated
@@ -134,8 +149,8 @@ Each successful run also writes:
   count, and observed values for every expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
   source and output paths, elapsed runtime, source file SHA-256, included order
-  statuses, source ingestion classification (`new_source_file`,
-  `repeated_source_file`, or `repeated_content_new_path`),
+  statuses, optional order-date window, source ingestion classification
+  (`new_source_file`, `repeated_source_file`, or `repeated_content_new_path`),
   bronze/silver/gold row counts, source status counts and order date range,
   silver customer/category/revenue profile, bronze-to-silver/rejected row count
   reconciliation, silver partition values, per-partition row counts and file
@@ -147,7 +162,7 @@ Each successful run also writes:
   Failed quality or reconciliation runs do not update this history, which keeps
   it from certifying bad batches as processed.
 - `rejected_orders.csv` with valid raw orders excluded from the silver layer by
-  configured status and an explicit `rejection_reason`.
+  configured status or order-date window and an explicit `rejection_reason`.
 - `gold_customer_metrics.csv` with customer-level order count, units, revenue,
   and first/last order dates.
 - `silver_orders_by_date/order_date=<YYYY-MM-DD>/silver_orders.csv` partition
@@ -160,8 +175,8 @@ matches the expected order contract with no missing or unexpected named columns,
 raw CSV rows are well formed with no missing or extra fields, order IDs are
 populated and unique, quantity and price are positive numbers, order dates use
 `YYYY-MM-DD`, key business dimensions are populated, and configured included
-statuses match at least one source row before rows are partitioned or
-aggregated.
+statuses plus any configured order-date window match at least one source row
+before rows are partitioned or aggregated.
 
 ## Roadmap
 

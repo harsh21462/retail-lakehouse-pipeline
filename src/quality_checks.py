@@ -25,6 +25,16 @@ def _is_iso_date(value):
         return False
 
 
+def _is_within_date_window(value, start=None, end=None):
+    if not _is_iso_date(value):
+        return False
+    if start is not None and value < start:
+        return False
+    if end is not None and value > end:
+        return False
+    return True
+
+
 def _is_blank(value):
     return value is None or not str(value).strip()
 
@@ -36,7 +46,12 @@ def _row_identifier(row, index):
     return order_id
 
 
-def evaluate_quality(rows, included_statuses=None):
+def evaluate_quality(
+    rows,
+    included_statuses=None,
+    order_date_start=None,
+    order_date_end=None,
+):
     """Evaluate the raw order data and return a machine-readable report."""
     columns = list(rows[0]) if rows else []
     missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
@@ -107,6 +122,38 @@ def evaluate_quality(rows, included_statuses=None):
             )
         )
 
+    selected_row_expectation = []
+    if included_statuses is not None and (
+        order_date_start is not None or order_date_end is not None
+    ):
+        included_status_set = set(included_statuses)
+        matching_rows = [
+            row
+            for row in rows
+            if row.get("status") in included_status_set
+            and _is_within_date_window(
+                row.get("order_date"),
+                start=order_date_start,
+                end=order_date_end,
+            )
+        ]
+        matching_status_counts = Counter(row.get("status") for row in matching_rows)
+        selected_row_expectation.append(
+            _expectation(
+                "selected_rows_match_config",
+                not missing_columns and len(matching_rows) > 0,
+                {
+                    "included_statuses": list(included_statuses),
+                    "order_date_start": order_date_start,
+                    "order_date_end": order_date_end,
+                    "matching_rows": len(matching_rows),
+                    "matching_status_counts": dict(
+                        sorted(matching_status_counts.items())
+                    ),
+                },
+            )
+        )
+
     expectations = [
         _expectation("dataset_is_not_empty", bool(rows), {"row_count": len(rows)}),
         _expectation(
@@ -156,6 +203,7 @@ def evaluate_quality(rows, included_statuses=None):
             {"invalid_order_ids": blank_dimension_ids},
         ),
         *status_coverage_expectation,
+        *selected_row_expectation,
     ]
     return {
         "success": all(result["success"] for result in expectations),
@@ -164,8 +212,18 @@ def evaluate_quality(rows, included_statuses=None):
     }
 
 
-def run_quality_checks(rows, included_statuses=None):
-    report = evaluate_quality(rows, included_statuses)
+def run_quality_checks(
+    rows,
+    included_statuses=None,
+    order_date_start=None,
+    order_date_end=None,
+):
+    report = evaluate_quality(
+        rows,
+        included_statuses,
+        order_date_start,
+        order_date_end,
+    )
     raise_for_failed_quality(report)
     return report
 

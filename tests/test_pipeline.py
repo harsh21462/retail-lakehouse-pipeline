@@ -207,7 +207,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "known_paths_for_source": [str(raw_path)],
         },
     }
-    assert manifest["config"] == {"included_statuses": ["delivered"]}
+    assert manifest["config"] == {
+        "included_statuses": ["delivered"],
+        "order_date_window": {"start": None, "end": None},
+    }
     assert manifest["layers"] == {
         "bronze": {"rows": 3},
         "rejected": {
@@ -492,6 +495,123 @@ def test_pipeline_persists_quality_report_before_failing(tmp_path):
     assert not (processed_dir / "bronze_orders.csv").exists()
 
 
+def test_pipeline_applies_configured_order_date_window(tmp_path):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered\n"
+        "1002,C002,2026-06-02,Home,Chair,1,2500,delivered\n"
+        "1003,C003,2026-06-03,Home,Desk,1,1200,cancelled\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+                "order_date_start": "2026-06-02",
+                "order_date_end": "2026-06-02",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(config_path)
+
+    assert read_rows(processed_dir / "silver_orders.csv") == [
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "2500.0",
+            "revenue": "2500.0",
+        }
+    ]
+    assert read_rows(processed_dir / "rejected_orders.csv") == [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+            "rejection_reason": "order_date_out_of_range",
+        },
+        {
+            "order_id": "1003",
+            "customer_id": "C003",
+            "order_date": "2026-06-03",
+            "category": "Home",
+            "product": "Desk",
+            "quantity": "1",
+            "unit_price": "1200",
+            "status": "cancelled",
+            "rejection_reason": "status_not_included",
+        },
+    ]
+    manifest = json.loads(
+        (processed_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["config"] == {
+        "included_statuses": ["delivered"],
+        "order_date_window": {"start": "2026-06-02", "end": "2026-06-02"},
+    }
+    assert manifest["layers"]["rejected"]["reasons"] == {
+        "order_date_out_of_range": 1,
+        "status_not_included": 1,
+    }
+    assert manifest["quality"] == {"success": True, "expectations": 11}
+
+
+def test_pipeline_fails_when_date_window_matches_no_selected_rows(tmp_path):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+                "order_date_start": "2026-06-02",
+                "order_date_end": "2026-06-03",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="selected_rows_match_config"):
+        main(config_path)
+
+    quality_report = json.loads(
+        (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
+    )
+    results = {item["expectation"]: item for item in quality_report["expectations"]}
+    assert results["selected_rows_match_config"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "order_date_start": "2026-06-02",
+        "order_date_end": "2026-06-03",
+        "matching_rows": 0,
+        "matching_status_counts": {},
+    }
+    assert not (processed_dir / "bronze_orders.csv").exists()
+
+
 def test_pipeline_fails_when_configured_statuses_match_no_source_rows(tmp_path):
     raw_path = tmp_path / "raw" / "orders.csv"
     processed_dir = tmp_path / "processed"
@@ -554,7 +674,12 @@ def test_pipeline_fails_when_silver_reconciliation_does_not_balance(
         encoding="utf-8",
     )
 
-    def drop_all_rows(rows, included_statuses):
+    def drop_all_rows(
+        rows,
+        included_statuses,
+        order_date_start=None,
+        order_date_end=None,
+    ):
         return [], []
 
     monkeypatch.setattr("src.pipeline.build_silver_outputs", drop_all_rows)

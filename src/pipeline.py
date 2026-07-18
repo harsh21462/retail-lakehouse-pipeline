@@ -73,7 +73,41 @@ def load_config(path=DEFAULT_CONFIG_PATH):
             f"values: {duplicate_statuses}"
         )
 
+    for key in ["order_date_start", "order_date_end"]:
+        if key not in config or config[key] is None:
+            continue
+        if not isinstance(config[key], str) or not _is_iso_date(config[key]):
+            raise ValueError(
+                f"Configuration key '{key}' must be a YYYY-MM-DD date string"
+            )
+
+    if (
+        config.get("order_date_start") is not None
+        and config.get("order_date_end") is not None
+        and config["order_date_start"] > config["order_date_end"]
+    ):
+        raise ValueError(
+            "Configuration key 'order_date_start' must be on or before "
+            "'order_date_end'"
+        )
+
     return config
+
+
+def _is_iso_date(value):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat() == value
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_within_order_date_window(row, start=None, end=None):
+    order_date = row["order_date"]
+    if start is not None and order_date < start:
+        return False
+    if end is not None and order_date > end:
+        return False
+    return True
 
 
 def resolve_pipeline_path(path_value, base_dir=ROOT):
@@ -235,6 +269,8 @@ def build_run_manifest(
     ingestion_event,
     processed_dir,
     included_statuses,
+    order_date_start,
+    order_date_end,
     bronze_rows,
     silver_rows,
     rejected_rows,
@@ -273,6 +309,10 @@ def build_run_manifest(
         },
         "config": {
             "included_statuses": list(included_statuses),
+            "order_date_window": {
+                "start": order_date_start,
+                "end": order_date_end,
+            },
         },
         "layers": {
             "bronze": {"rows": len(bronze_rows)},
@@ -306,7 +346,12 @@ def build_run_manifest(
     }
 
 
-def build_silver_outputs(rows, included_statuses=("delivered",)):
+def build_silver_outputs(
+    rows,
+    included_statuses=("delivered",),
+    order_date_start=None,
+    order_date_end=None,
+):
     silver_rows = []
     rejected_rows = []
     included_statuses = set(included_statuses)
@@ -314,6 +359,13 @@ def build_silver_outputs(rows, included_statuses=("delivered",)):
     for row in rows:
         if row["status"] not in included_statuses:
             rejected_rows.append({**row, "rejection_reason": "status_not_included"})
+            continue
+        if not _is_within_order_date_window(
+            row,
+            start=order_date_start,
+            end=order_date_end,
+        ):
+            rejected_rows.append({**row, "rejection_reason": "order_date_out_of_range"})
             continue
 
         quantity = int(row["quantity"])
@@ -360,8 +412,18 @@ def raise_for_failed_reconciliation(reconciliation):
         )
 
 
-def build_silver_orders(rows, included_statuses=("delivered",)):
-    silver_rows, _ = build_silver_outputs(rows, included_statuses)
+def build_silver_orders(
+    rows,
+    included_statuses=("delivered",),
+    order_date_start=None,
+    order_date_end=None,
+):
+    silver_rows, _ = build_silver_outputs(
+        rows,
+        included_statuses,
+        order_date_start,
+        order_date_end,
+    )
     return silver_rows
 
 
@@ -567,6 +629,8 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     quality_report = evaluate_quality(
         bronze_rows,
         included_statuses=config["included_statuses"],
+        order_date_start=config.get("order_date_start"),
+        order_date_end=config.get("order_date_end"),
     )
     quality_report_path = processed_dir / "data_quality_report.json"
     write_json(quality_report_path, quality_report)
@@ -578,6 +642,8 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     silver_rows, rejected_rows = build_silver_outputs(
         bronze_rows,
         config["included_statuses"],
+        order_date_start=config.get("order_date_start"),
+        order_date_end=config.get("order_date_end"),
     )
     raise_for_failed_reconciliation(
         build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows)
@@ -662,6 +728,8 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         ingestion_event=ingestion_event,
         processed_dir=processed_dir,
         included_statuses=config["included_statuses"],
+        order_date_start=config.get("order_date_start"),
+        order_date_end=config.get("order_date_end"),
         bronze_rows=bronze_rows,
         silver_rows=silver_rows,
         rejected_rows=rejected_rows,

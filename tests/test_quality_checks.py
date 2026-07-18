@@ -108,6 +108,38 @@ def test_quality_checks_report_matching_included_status_counts():
     }
 
 
+def test_quality_checks_validate_date_window_selection():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        }
+    ]
+
+    report = evaluate_quality(
+        rows,
+        included_statuses=["delivered"],
+        order_date_start="2026-06-02",
+        order_date_end="2026-06-03",
+    )
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["selected_rows_match_config"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "order_date_start": "2026-06-02",
+        "order_date_end": "2026-06-03",
+        "matching_rows": 0,
+        "matching_status_counts": {},
+    }
+
+
 def test_quality_checks_fail_for_duplicate_order_id():
     rows = [
         {
@@ -185,6 +217,46 @@ def test_silver_outputs_return_rejected_rows_with_reason():
         {
             **rows[1],
             "rejection_reason": "status_not_included",
+        }
+    ]
+
+
+def test_silver_outputs_reject_rows_outside_configured_date_window():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "delivered",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "2500",
+            "status": "delivered",
+        },
+    ]
+
+    silver_rows, rejected_rows = build_silver_outputs(
+        rows,
+        ["delivered"],
+        order_date_start="2026-06-02",
+        order_date_end="2026-06-02",
+    )
+
+    assert [row["order_id"] for row in silver_rows] == ["1002"]
+    assert rejected_rows == [
+        {
+            **rows[0],
+            "rejection_reason": "order_date_out_of_range",
         }
     ]
 
@@ -433,6 +505,28 @@ def test_load_config_rejects_blank_paths(tmp_path):
     )
 
     with pytest.raises(ValueError, match="non-empty strings"):
+        load_config(config_path)
+
+
+def test_load_config_validates_optional_order_date_window(tmp_path):
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"order_date_start": "2026-06-03", "order_date_end": "2026-06-01"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="on or before"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], "order_date_start": "06/01/2026"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
         load_config(config_path)
 
 
