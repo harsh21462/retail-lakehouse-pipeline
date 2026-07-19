@@ -270,6 +270,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         },
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
+        "gold_category": {"rows": 2},
     }
     assert manifest["quality"] == {"success": True, "expectations": 10}
     assert manifest["reconciliation"] == {
@@ -290,6 +291,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         ),
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
         "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
+        "gold_category_metrics": str(processed_dir / "gold_category_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
         "ingestion_history": str(processed_dir / "ingestion_history.json"),
     }
@@ -454,6 +456,28 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "orders": "1",
             "units": "2",
             "revenue": "3000.0",
+            "first_order_date": "2026-06-01",
+            "last_order_date": "2026-06-01",
+        },
+    ]
+    assert read_rows(processed_dir / "gold_category_metrics.csv") == [
+        {
+            "category": "Home",
+            "orders": "1",
+            "customers": "1",
+            "units": "2",
+            "revenue": "5000.0",
+            "average_order_value": "5000.0",
+            "first_order_date": "2026-06-02",
+            "last_order_date": "2026-06-02",
+        },
+        {
+            "category": "Electronics",
+            "orders": "1",
+            "customers": "1",
+            "units": "2",
+            "revenue": "3000.0",
+            "average_order_value": "3000.0",
             "first_order_date": "2026-06-01",
             "last_order_date": "2026-06-01",
         },

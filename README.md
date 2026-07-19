@@ -26,6 +26,7 @@ retail-lakehouse-pipeline/
 |   |   `-- orders.csv
 |   `-- processed/
 |-- sql/
+|   |-- gold_category_metrics.sql
 |   |-- gold_customer_metrics.sql
 |   `-- gold_revenue_metrics.sql
 |-- dags/
@@ -55,7 +56,7 @@ retail-lakehouse-pipeline/
    or double-counting fails the run before downstream layers are written.
 6. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
-7. Execute version-controlled SQL models to build gold revenue and customer summaries.
+7. Execute version-controlled SQL models to build gold revenue, customer, and category summaries.
 8. Run named data quality expectations, including config-aware checks that
    included order statuses and any configured order-date window match at least
    one source row, and persist their validation report.
@@ -116,10 +117,11 @@ If a data quality expectation fails, the pipeline writes
 `data_quality_report.json` before stopping so the failed run still has a
 diagnostic artifact.
 
-The gold layers are defined in `sql/gold_revenue_metrics.sql` and
-`sql/gold_customer_metrics.sql`. The pipeline loads the cleaned silver rows into
-an in-memory SQLite table and executes those models, so the SQL artifacts are
-tested and used in every local and CI pipeline run.
+The gold layers are defined in `sql/gold_revenue_metrics.sql`,
+`sql/gold_customer_metrics.sql`, and `sql/gold_category_metrics.sql`. The
+pipeline loads the cleaned silver rows into an in-memory SQLite table and
+executes those models, so the SQL artifacts are tested and used in every local
+and CI pipeline run.
 
 ## Airflow Scheduling
 
@@ -154,8 +156,8 @@ Each successful run also writes:
   bronze/silver/gold row counts, source status counts and order date range,
   silver customer/category/revenue profile, bronze-to-silver/rejected row count
   reconciliation, silver partition values, per-partition row counts and file
-  paths, rejection reason counts, customer metric row counts, quality summary,
-  generated artifact paths, and
+  paths, rejection reason counts, customer and category metric row counts,
+  quality summary, generated artifact paths, and
   per-artifact existence/type/file-count/byte-size metadata.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
@@ -165,6 +167,8 @@ Each successful run also writes:
   configured status or order-date window and an explicit `rejection_reason`.
 - `gold_customer_metrics.csv` with customer-level order count, units, revenue,
   and first/last order dates.
+- `gold_category_metrics.csv` with category-level order count, customer count,
+  units, revenue, average order value, and first/last order dates.
 - `silver_orders_by_date/order_date=<YYYY-MM-DD>/silver_orders.csv` partition
   files for date-scoped silver reads.
 - `silver_orders_by_date_parquet/order_date=<YYYY-MM-DD>/silver_orders.parquet`

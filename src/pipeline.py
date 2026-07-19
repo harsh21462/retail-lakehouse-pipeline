@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
 GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
 GOLD_CUSTOMER_SQL_PATH = ROOT / "sql" / "gold_customer_metrics.sql"
+GOLD_CATEGORY_SQL_PATH = ROOT / "sql" / "gold_category_metrics.sql"
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 
@@ -276,6 +277,7 @@ def build_run_manifest(
     rejected_rows,
     gold_rows,
     customer_gold_rows,
+    category_gold_rows,
     quality_report,
 ):
     artifacts = {
@@ -284,6 +286,7 @@ def build_run_manifest(
         "silver_orders": processed_dir / "silver_orders.csv",
         "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
         "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
+        "gold_category_metrics": processed_dir / "gold_category_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
         "ingestion_history": processed_dir / INGESTION_HISTORY_FILENAME,
     }
@@ -332,6 +335,7 @@ def build_run_manifest(
             },
             "gold": {"rows": len(gold_rows)},
             "gold_customer": {"rows": len(customer_gold_rows)},
+            "gold_category": {"rows": len(category_gold_rows)},
         },
         "quality": {
             "success": quality_report["success"],
@@ -432,6 +436,10 @@ def build_gold_revenue(rows, sql_path=GOLD_SQL_PATH):
 
 
 def build_gold_customer_metrics(rows, sql_path=GOLD_CUSTOMER_SQL_PATH):
+    return run_gold_model(rows, sql_path)
+
+
+def build_gold_category_metrics(rows, sql_path=GOLD_CATEGORY_SQL_PATH):
     return run_gold_model(rows, sql_path)
 
 
@@ -701,6 +709,17 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         customer_gold_fields,
     )
 
+    category_gold_rows = build_gold_category_metrics(silver_rows)
+    category_gold_fields = [
+        "category", "orders", "customers", "units", "revenue",
+        "average_order_value", "first_order_date", "last_order_date",
+    ]
+    write_layer(
+        processed_dir / "gold_category_metrics.csv",
+        category_gold_rows,
+        category_gold_fields,
+    )
+
     completed_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     ingestion_history_path = processed_dir / INGESTION_HISTORY_FILENAME
     ingestion_history = load_ingestion_history(ingestion_history_path)
@@ -735,6 +754,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         rejected_rows=rejected_rows,
         gold_rows=gold_rows,
         customer_gold_rows=customer_gold_rows,
+        category_gold_rows=category_gold_rows,
         quality_report=quality_report,
     )
     manifest["artifacts"]["silver_orders_by_date"] = str(
@@ -771,12 +791,13 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     LOGGER.info(
         "Pipeline completed: %s raw, %s rejected, %s silver, %s revenue gold, "
-        "and %s customer gold rows",
+        "%s customer gold, and %s category gold rows",
         len(bronze_rows),
         len(rejected_rows),
         len(silver_rows),
         len(gold_rows),
         len(customer_gold_rows),
+        len(category_gold_rows),
     )
 
 
