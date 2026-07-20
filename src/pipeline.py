@@ -13,10 +13,18 @@ from pathlib import Path
 
 try:
     from .quality_checks import evaluate_quality, raise_for_failed_quality
-    from .sql_transforms import run_gold_model, run_gold_revenue_model
+    from .sql_transforms import (
+        run_gold_model,
+        run_gold_revenue_model,
+        run_rejected_order_model,
+    )
 except ImportError:  # Support direct execution with `python src/pipeline.py`.
     from quality_checks import evaluate_quality, raise_for_failed_quality
-    from sql_transforms import run_gold_model, run_gold_revenue_model
+    from sql_transforms import (
+        run_gold_model,
+        run_gold_revenue_model,
+        run_rejected_order_model,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +32,7 @@ DEFAULT_CONFIG_PATH = ROOT / "config" / "pipeline.json"
 GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
 GOLD_CUSTOMER_SQL_PATH = ROOT / "sql" / "gold_customer_metrics.sql"
 GOLD_CATEGORY_SQL_PATH = ROOT / "sql" / "gold_category_metrics.sql"
+GOLD_REJECTION_SQL_PATH = ROOT / "sql" / "gold_rejection_metrics.sql"
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 
@@ -278,6 +287,7 @@ def build_run_manifest(
     gold_rows,
     customer_gold_rows,
     category_gold_rows,
+    rejection_gold_rows,
     quality_report,
 ):
     artifacts = {
@@ -287,6 +297,7 @@ def build_run_manifest(
         "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
         "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
         "gold_category_metrics": processed_dir / "gold_category_metrics.csv",
+        "gold_rejection_metrics": processed_dir / "gold_rejection_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
         "ingestion_history": processed_dir / INGESTION_HISTORY_FILENAME,
     }
@@ -336,6 +347,7 @@ def build_run_manifest(
             "gold": {"rows": len(gold_rows)},
             "gold_customer": {"rows": len(customer_gold_rows)},
             "gold_category": {"rows": len(category_gold_rows)},
+            "gold_rejection": {"rows": len(rejection_gold_rows)},
         },
         "quality": {
             "success": quality_report["success"],
@@ -441,6 +453,10 @@ def build_gold_customer_metrics(rows, sql_path=GOLD_CUSTOMER_SQL_PATH):
 
 def build_gold_category_metrics(rows, sql_path=GOLD_CATEGORY_SQL_PATH):
     return run_gold_model(rows, sql_path)
+
+
+def build_gold_rejection_metrics(rows, sql_path=GOLD_REJECTION_SQL_PATH):
+    return run_rejected_order_model(rows, sql_path)
 
 
 def write_layer(path, rows, fieldnames):
@@ -720,6 +736,17 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         category_gold_fields,
     )
 
+    rejection_gold_rows = build_gold_rejection_metrics(rejected_rows)
+    rejection_gold_fields = [
+        "rejection_reason", "status", "order_date", "category",
+        "rejected_orders", "rejected_units", "potential_revenue",
+    ]
+    write_layer(
+        processed_dir / "gold_rejection_metrics.csv",
+        rejection_gold_rows,
+        rejection_gold_fields,
+    )
+
     completed_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     ingestion_history_path = processed_dir / INGESTION_HISTORY_FILENAME
     ingestion_history = load_ingestion_history(ingestion_history_path)
@@ -755,6 +782,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         gold_rows=gold_rows,
         customer_gold_rows=customer_gold_rows,
         category_gold_rows=category_gold_rows,
+        rejection_gold_rows=rejection_gold_rows,
         quality_report=quality_report,
     )
     manifest["artifacts"]["silver_orders_by_date"] = str(
@@ -791,13 +819,14 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     LOGGER.info(
         "Pipeline completed: %s raw, %s rejected, %s silver, %s revenue gold, "
-        "%s customer gold, and %s category gold rows",
+        "%s customer gold, %s category gold, and %s rejection gold rows",
         len(bronze_rows),
         len(rejected_rows),
         len(silver_rows),
         len(gold_rows),
         len(customer_gold_rows),
         len(category_gold_rows),
+        len(rejection_gold_rows),
     )
 
 

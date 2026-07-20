@@ -271,6 +271,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold": {"rows": 2},
         "gold_customer": {"rows": 2},
         "gold_category": {"rows": 2},
+        "gold_rejection": {"rows": 1},
     }
     assert manifest["quality"] == {"success": True, "expectations": 10}
     assert manifest["reconciliation"] == {
@@ -292,6 +293,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_revenue_metrics": str(processed_dir / "gold_revenue_metrics.csv"),
         "gold_customer_metrics": str(processed_dir / "gold_customer_metrics.csv"),
         "gold_category_metrics": str(processed_dir / "gold_category_metrics.csv"),
+        "gold_rejection_metrics": str(processed_dir / "gold_rejection_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
         "ingestion_history": str(processed_dir / "ingestion_history.json"),
     }
@@ -481,6 +483,17 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "first_order_date": "2026-06-01",
             "last_order_date": "2026-06-01",
         },
+    ]
+    assert read_rows(processed_dir / "gold_rejection_metrics.csv") == [
+        {
+            "rejection_reason": "status_not_included",
+            "status": "cancelled",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "rejected_orders": "1",
+            "rejected_units": "1",
+            "potential_revenue": "800.0",
+        }
     ]
 
 

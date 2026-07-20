@@ -1,5 +1,14 @@
-from src.pipeline import GOLD_CATEGORY_SQL_PATH, GOLD_CUSTOMER_SQL_PATH, GOLD_SQL_PATH
-from src.sql_transforms import run_gold_model, run_gold_revenue_model
+from src.pipeline import (
+    GOLD_CATEGORY_SQL_PATH,
+    GOLD_CUSTOMER_SQL_PATH,
+    GOLD_REJECTION_SQL_PATH,
+    GOLD_SQL_PATH,
+)
+from src.sql_transforms import (
+    run_gold_model,
+    run_gold_revenue_model,
+    run_rejected_order_model,
+)
 
 
 def test_gold_revenue_model_aggregates_and_orders_silver_rows():
@@ -170,3 +179,66 @@ def test_gold_category_model_summarizes_category_performance():
             "last_order_date": "2026-06-03",
         },
     ]
+
+
+def test_gold_rejection_model_summarizes_filtered_orders():
+    rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500",
+            "status": "cancelled",
+            "rejection_reason": "status_not_included",
+        },
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Mouse",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "cancelled",
+            "rejection_reason": "status_not_included",
+        },
+        {
+            "order_id": "1003",
+            "customer_id": "C003",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "product": "Chair",
+            "quantity": "1",
+            "unit_price": "2500",
+            "status": "delivered",
+            "rejection_reason": "order_date_out_of_range",
+        },
+    ]
+
+    assert run_rejected_order_model(rows, GOLD_REJECTION_SQL_PATH) == [
+        {
+            "rejection_reason": "status_not_included",
+            "status": "cancelled",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "rejected_orders": 2,
+            "rejected_units": 3,
+            "potential_revenue": 3800.0,
+        },
+        {
+            "rejection_reason": "order_date_out_of_range",
+            "status": "delivered",
+            "order_date": "2026-06-02",
+            "category": "Home",
+            "rejected_orders": 1,
+            "rejected_units": 1,
+            "potential_revenue": 2500.0,
+        },
+    ]
+
+
+def test_gold_rejection_model_handles_an_empty_rejected_layer():
+    assert run_rejected_order_model([], GOLD_REJECTION_SQL_PATH) == []
