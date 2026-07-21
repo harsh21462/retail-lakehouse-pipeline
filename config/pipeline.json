@@ -1,5 +1,9 @@
 {
   "raw_path": "data/raw/orders.csv",
   "processed_dir": "data/processed",
-  "included_statuses": ["delivered"]
+  "included_statuses": ["delivered"],
+  "warning_thresholds": {
+    "max_rejection_rate": 0.3,
+    "min_silver_rows": 1
+  }
 }

@@ -67,8 +67,8 @@ retail-lakehouse-pipeline/
 10. Write a pipeline manifest with run timing and resolved paths, source
    checksum, source ingestion classification, config, row counts, quality
    status, row count reconciliation, source and silver data profiles,
-   rejection reason counts, partition inventory, output artifact paths, and
-   artifact size inventory for each run.
+   rejection reason counts, non-blocking health warnings, partition inventory,
+   output artifact paths, and artifact size inventory for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -92,8 +92,12 @@ configured in `config/pipeline.json`. The pipeline validates that paths are
 non-empty strings and `included_statuses` is a non-empty list of unique,
 non-empty strings before reading source data. Optional `order_date_start` and
 `order_date_end` values must use `YYYY-MM-DD`, and the start must be on or
-before the end. Bad operational config fails fast instead of silently rejecting
-every order. Relative `raw_path` and `processed_dir` values are
+before the end. Optional `warning_thresholds` can set `max_rejection_rate`
+between 0 and 1 and `min_silver_rows` as a non-negative integer. Threshold
+breaches are written to the manifest as health warnings but do not fail the
+run; malformed threshold config fails fast. Bad operational config fails fast
+instead of silently rejecting every order. Relative `raw_path` and
+`processed_dir` values are
 resolved from the project root, while absolute paths are preserved. That keeps
 scheduled runs deterministic even when they start from a different working
 directory. Pass `--config` to run the same executable entrypoint with an
@@ -108,7 +112,11 @@ Example windowed backfill config:
   "processed_dir": "data/processed",
   "included_statuses": ["delivered"],
   "order_date_start": "2026-06-01",
-  "order_date_end": "2026-06-30"
+  "order_date_end": "2026-06-30",
+  "warning_thresholds": {
+    "max_rejection_rate": 0.2,
+    "min_silver_rows": 1000
+  }
 }
 ```
 
@@ -157,9 +165,10 @@ Each successful run also writes:
   (`new_source_file`, `repeated_source_file`, or `repeated_content_new_path`),
   bronze/silver/gold row counts, source status counts and order date range,
   silver customer/category/revenue profile, bronze-to-silver/rejected row count
-  reconciliation, silver partition values, per-partition row counts and file
-  paths, rejection reason counts, customer, category, and rejection metric row
-  counts, quality summary, generated artifact paths, and
+  reconciliation, configured health warning thresholds and any warning
+  breaches, silver partition values, per-partition row counts and file paths,
+  rejection reason counts, customer, category, and rejection metric row counts,
+  quality summary, generated artifact paths, and
   per-artifact existence/type/file-count/byte-size metadata.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.

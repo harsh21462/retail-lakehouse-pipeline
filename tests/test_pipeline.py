@@ -210,7 +210,9 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": None, "end": None},
+        "warning_thresholds": {},
     }
+    assert manifest["health"] == {"warnings": [], "warning_count": 0}
     assert manifest["layers"] == {
         "bronze": {"rows": 3},
         "rejected": {
@@ -601,12 +603,89 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": "2026-06-02", "end": "2026-06-02"},
+        "warning_thresholds": {},
     }
     assert manifest["layers"]["rejected"]["reasons"] == {
         "order_date_out_of_range": 1,
         "status_not_included": 1,
     }
     assert manifest["quality"] == {"success": True, "expectations": 11}
+
+
+def test_pipeline_persists_health_warnings_without_failing_run(tmp_path):
+    raw_path = tmp_path / "raw" / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    config_path = tmp_path / "pipeline.json"
+    raw_path.parent.mkdir()
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500,delivered\n"
+        "1002,C002,2026-06-01,Electronics,Mouse,1,800,cancelled\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+                "warning_thresholds": {
+                    "max_rejection_rate": 0.25,
+                    "min_silver_rows": 2,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(config_path)
+
+    manifest = json.loads(
+        (processed_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["config"]["warning_thresholds"] == {
+        "max_rejection_rate": 0.25,
+        "min_silver_rows": 2,
+    }
+    assert manifest["health"] == {
+        "warnings": [
+            {
+                "name": "rejection_rate_above_threshold",
+                "severity": "warning",
+                "message": (
+                    "Rejected row rate exceeded configured warning threshold"
+                ),
+                "observed": {
+                    "bronze_rows": 2,
+                    "rejected_rows": 1,
+                    "rejection_rate": 0.5,
+                },
+                "threshold": {"max_rejection_rate": 0.25},
+            },
+            {
+                "name": "silver_rows_below_threshold",
+                "severity": "warning",
+                "message": (
+                    "Silver row count fell below configured warning threshold"
+                ),
+                "observed": {"silver_rows": 1},
+                "threshold": {"min_silver_rows": 2},
+            },
+        ],
+        "warning_count": 2,
+    }
+    assert read_rows(processed_dir / "silver_orders.csv") == [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "2",
+            "unit_price": "1500.0",
+            "revenue": "3000.0",
+        }
+    ]
 
 
 def test_pipeline_fails_when_date_window_matches_no_selected_rows(tmp_path):

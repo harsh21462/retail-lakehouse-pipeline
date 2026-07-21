@@ -2,6 +2,7 @@ import pytest
 
 from src.pipeline import (
     build_artifact_inventory,
+    build_health_warnings,
     load_ingestion_history,
     build_row_count_reconciliation,
     build_silver_orders,
@@ -291,6 +292,47 @@ def test_row_count_reconciliation_fails_on_unaccounted_rows():
         raise_for_failed_reconciliation(reconciliation)
 
 
+def test_health_warnings_report_threshold_breaches():
+    warnings = build_health_warnings(
+        bronze_rows=[{"order_id": "1001"}, {"order_id": "1002"}],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[{"order_id": "1002"}],
+        warning_thresholds={"max_rejection_rate": 0.25, "min_silver_rows": 2},
+    )
+
+    assert warnings == [
+        {
+            "name": "rejection_rate_above_threshold",
+            "severity": "warning",
+            "message": "Rejected row rate exceeded configured warning threshold",
+            "observed": {
+                "bronze_rows": 2,
+                "rejected_rows": 1,
+                "rejection_rate": 0.5,
+            },
+            "threshold": {"max_rejection_rate": 0.25},
+        },
+        {
+            "name": "silver_rows_below_threshold",
+            "severity": "warning",
+            "message": "Silver row count fell below configured warning threshold",
+            "observed": {"silver_rows": 1},
+            "threshold": {"min_silver_rows": 2},
+        },
+    ]
+
+
+def test_health_warnings_stay_empty_when_thresholds_are_not_breached():
+    warnings = build_health_warnings(
+        bronze_rows=[{"order_id": "1001"}, {"order_id": "1002"}],
+        silver_rows=[{"order_id": "1001"}, {"order_id": "1002"}],
+        rejected_rows=[],
+        warning_thresholds={"max_rejection_rate": 0.25, "min_silver_rows": 2},
+    )
+
+    assert warnings == []
+
+
 def test_manifest_profiles_handle_empty_and_populated_rows():
     raw_rows = [
         {
@@ -527,6 +569,39 @@ def test_load_config_validates_optional_order_date_window(tmp_path):
     )
 
     with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        load_config(config_path)
+
+
+def test_load_config_validates_optional_warning_thresholds(tmp_path):
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"warning_thresholds": {"max_rejection_rate": 1.5}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_rejection_rate"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"warning_thresholds": {"min_silver_rows": true}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="min_silver_rows"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"warning_thresholds": {"unexpected": 1}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported"):
         load_config(config_path)
 
 

@@ -35,6 +35,10 @@ GOLD_CATEGORY_SQL_PATH = ROOT / "sql" / "gold_category_metrics.sql"
 GOLD_REJECTION_SQL_PATH = ROOT / "sql" / "gold_rejection_metrics.sql"
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
+SUPPORTED_WARNING_THRESHOLDS = {
+    "max_rejection_rate",
+    "min_silver_rows",
+}
 
 
 def load_config(path=DEFAULT_CONFIG_PATH):
@@ -101,6 +105,47 @@ def load_config(path=DEFAULT_CONFIG_PATH):
             "'order_date_end'"
         )
 
+    warning_thresholds = config.get("warning_thresholds", {})
+    if warning_thresholds is None:
+        warning_thresholds = {}
+    if not isinstance(warning_thresholds, dict):
+        raise ValueError("Configuration key 'warning_thresholds' must be an object")
+
+    unsupported_thresholds = sorted(
+        set(warning_thresholds) - SUPPORTED_WARNING_THRESHOLDS
+    )
+    if unsupported_thresholds:
+        raise ValueError(
+            "Configuration key 'warning_thresholds' contains unsupported "
+            f"keys: {unsupported_thresholds}"
+        )
+
+    if "max_rejection_rate" in warning_thresholds:
+        max_rejection_rate = warning_thresholds["max_rejection_rate"]
+        if (
+            isinstance(max_rejection_rate, bool)
+            or not isinstance(max_rejection_rate, (int, float))
+            or max_rejection_rate < 0
+            or max_rejection_rate > 1
+        ):
+            raise ValueError(
+                "Configuration key 'warning_thresholds.max_rejection_rate' "
+                "must be a number between 0 and 1"
+            )
+
+    if "min_silver_rows" in warning_thresholds:
+        min_silver_rows = warning_thresholds["min_silver_rows"]
+        if (
+            isinstance(min_silver_rows, bool)
+            or not isinstance(min_silver_rows, int)
+            or min_silver_rows < 0
+        ):
+            raise ValueError(
+                "Configuration key 'warning_thresholds.min_silver_rows' "
+                "must be a non-negative integer"
+            )
+
+    config["warning_thresholds"] = warning_thresholds
     return config
 
 
@@ -281,6 +326,8 @@ def build_run_manifest(
     included_statuses,
     order_date_start,
     order_date_end,
+    warning_thresholds,
+    health_warnings,
     bronze_rows,
     silver_rows,
     rejected_rows,
@@ -327,6 +374,11 @@ def build_run_manifest(
                 "start": order_date_start,
                 "end": order_date_end,
             },
+            "warning_thresholds": dict(warning_thresholds),
+        },
+        "health": {
+            "warnings": health_warnings,
+            "warning_count": len(health_warnings),
         },
         "layers": {
             "bronze": {"rows": len(bronze_rows)},
@@ -417,6 +469,56 @@ def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
         "accounted_rows": accounted_count,
         "difference": bronze_count - accounted_count,
     }
+
+
+def build_health_warnings(
+    bronze_rows,
+    silver_rows,
+    rejected_rows,
+    warning_thresholds=None,
+):
+    warning_thresholds = warning_thresholds or {}
+    warnings = []
+    bronze_count = len(bronze_rows)
+    silver_count = len(silver_rows)
+    rejected_count = len(rejected_rows)
+
+    if "max_rejection_rate" in warning_thresholds:
+        threshold = warning_thresholds["max_rejection_rate"]
+        rejection_rate = rejected_count / bronze_count if bronze_count else 0
+        if rejection_rate > threshold:
+            warnings.append(
+                {
+                    "name": "rejection_rate_above_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Rejected row rate exceeded configured warning threshold"
+                    ),
+                    "observed": {
+                        "bronze_rows": bronze_count,
+                        "rejected_rows": rejected_count,
+                        "rejection_rate": round(rejection_rate, 6),
+                    },
+                    "threshold": {"max_rejection_rate": threshold},
+                }
+            )
+
+    if "min_silver_rows" in warning_thresholds:
+        threshold = warning_thresholds["min_silver_rows"]
+        if silver_count < threshold:
+            warnings.append(
+                {
+                    "name": "silver_rows_below_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Silver row count fell below configured warning threshold"
+                    ),
+                    "observed": {"silver_rows": silver_count},
+                    "threshold": {"min_silver_rows": threshold},
+                }
+            )
+
+    return warnings
 
 
 def raise_for_failed_reconciliation(reconciliation):
@@ -672,6 +774,15 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     raise_for_failed_reconciliation(
         build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows)
     )
+    health_warnings = build_health_warnings(
+        bronze_rows,
+        silver_rows,
+        rejected_rows,
+        config["warning_thresholds"],
+    )
+    for warning in health_warnings:
+        LOGGER.warning("%s: %s", warning["name"], warning["message"])
+
     rejected_fields = [*bronze_rows[0].keys(), "rejection_reason"]
     write_layer(
         processed_dir / "rejected_orders.csv",
@@ -776,6 +887,8 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         included_statuses=config["included_statuses"],
         order_date_start=config.get("order_date_start"),
         order_date_end=config.get("order_date_end"),
+        warning_thresholds=config["warning_thresholds"],
+        health_warnings=health_warnings,
         bronze_rows=bronze_rows,
         silver_rows=silver_rows,
         rejected_rows=rejected_rows,
