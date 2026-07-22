@@ -65,10 +65,11 @@ retail-lakehouse-pipeline/
 9. Update an ingestion history keyed by source file checksum so repeated
    source files are visible even when they arrive under a different path.
 10. Write a pipeline manifest with run timing and resolved paths, source
-   checksum, source ingestion classification, config, row counts, quality
-   status, row count reconciliation, source and silver data profiles,
-   rejection reason counts, non-blocking health warnings, partition inventory,
-   output artifact paths, and artifact size inventory for each run.
+    checksum, source ingestion classification, config, row counts, quality
+    status, row count reconciliation, source and silver data profiles,
+    rejection reason counts, non-blocking health warnings, partition inventory,
+    output artifact paths, artifact size inventory, and a machine-readable
+    lineage graph for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -169,7 +170,10 @@ Each successful run also writes:
   breaches, silver partition values, per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
   quality summary, generated artifact paths, and
-  per-artifact existence/type/file-count/byte-size metadata.
+  per-artifact existence/type/file-count/byte-size metadata. The manifest also
+  includes a versioned lineage graph linking the raw source, quality report,
+  ingestion history, bronze layer, silver layer, partitioned silver outputs,
+  rejected-order audit table, and executable SQL gold models.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps
@@ -203,6 +207,7 @@ before rows are partitioned or aggregated.
 - [x] Add Great Expectations style data quality checks.
 - [x] Add Airflow DAG for orchestration.
 - [x] Add executable SQL model for gold transformations.
+- [x] Add manifest-native lineage for source, lakehouse layers, and gold models.
 - Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
 - [x] Add run manifest for pipeline observability.

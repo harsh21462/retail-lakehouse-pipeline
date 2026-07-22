@@ -319,6 +319,26 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         manifest["artifact_inventory"]["silver_orders_by_date_parquet"]["files"]
         == 2
     )
+    assert manifest["lineage"]["version"] == 1
+    assert manifest["lineage"]["root"] == str(processed_dir)
+    assert {node["id"] for node in manifest["lineage"]["nodes"]} == {
+        "source.raw_orders",
+        "quality.raw_order_expectations",
+        "history.source_ingestion",
+        "bronze.orders",
+        "silver.orders",
+        "silver.orders_by_date_csv",
+        "silver.orders_by_date_parquet",
+        "rejected.orders",
+        "gold.revenue_metrics",
+        "gold.customer_metrics",
+        "gold.category_metrics",
+        "gold.rejection_metrics",
+    }
+    assert {
+        "from": "silver.orders",
+        "to": "silver.orders_by_date_parquet",
+    } in manifest["lineage"]["edges"]
 
     ingestion_history = json.loads(
         (processed_dir / "ingestion_history.json").read_text(encoding="utf-8")

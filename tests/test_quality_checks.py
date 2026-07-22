@@ -3,6 +3,7 @@ import pytest
 from src.pipeline import (
     build_artifact_inventory,
     build_health_warnings,
+    build_lineage,
     load_ingestion_history,
     build_row_count_reconciliation,
     build_silver_orders,
@@ -431,6 +432,55 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "files": 0,
         "bytes": 0,
     }
+
+
+def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):
+    processed_dir = tmp_path / "processed"
+    artifacts = {
+        "bronze_orders": processed_dir / "bronze_orders.csv",
+        "rejected_orders": processed_dir / "rejected_orders.csv",
+        "silver_orders": processed_dir / "silver_orders.csv",
+        "silver_orders_by_date": processed_dir / "silver_orders_by_date",
+        "silver_orders_by_date_parquet": (
+            processed_dir / "silver_orders_by_date_parquet"
+        ),
+        "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
+        "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
+        "gold_category_metrics": processed_dir / "gold_category_metrics.csv",
+        "gold_rejection_metrics": processed_dir / "gold_rejection_metrics.csv",
+        "data_quality_report": processed_dir / "data_quality_report.json",
+        "ingestion_history": processed_dir / "ingestion_history.json",
+    }
+
+    lineage = build_lineage(
+        raw_path=tmp_path / "raw" / "orders.csv",
+        processed_dir=processed_dir,
+        artifacts=artifacts,
+    )
+
+    assert lineage["version"] == 1
+    assert lineage["root"] == str(processed_dir)
+    node_ids = {node["id"] for node in lineage["nodes"]}
+    assert {
+        "source.raw_orders",
+        "quality.raw_order_expectations",
+        "history.source_ingestion",
+        "bronze.orders",
+        "silver.orders",
+        "silver.orders_by_date_csv",
+        "silver.orders_by_date_parquet",
+        "rejected.orders",
+        "gold.revenue_metrics",
+        "gold.customer_metrics",
+        "gold.category_metrics",
+        "gold.rejection_metrics",
+    } == node_ids
+    assert {"from": "source.raw_orders", "to": "bronze.orders"} in lineage["edges"]
+    assert {"from": "silver.orders", "to": "gold.revenue_metrics"} in lineage["edges"]
+    assert {
+        "from": "rejected.orders",
+        "to": "gold.rejection_metrics",
+    } in lineage["edges"]
 
 
 def test_ingestion_history_classifies_new_and_repeated_sources():

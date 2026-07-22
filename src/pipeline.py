@@ -737,6 +737,108 @@ def build_artifact_inventory(artifacts):
     return inventory
 
 
+def build_lineage(*, raw_path, processed_dir, artifacts):
+    artifact_paths = {name: str(path) for name, path in artifacts.items()}
+    source_node = {
+        "id": "source.raw_orders",
+        "type": "source",
+        "path": str(raw_path),
+    }
+    nodes = [
+        source_node,
+        {
+            "id": "quality.raw_order_expectations",
+            "type": "quality_report",
+            "path": artifact_paths["data_quality_report"],
+        },
+        {
+            "id": "history.source_ingestion",
+            "type": "metadata",
+            "path": artifact_paths["ingestion_history"],
+        },
+        {
+            "id": "bronze.orders",
+            "type": "table",
+            "layer": "bronze",
+            "path": artifact_paths["bronze_orders"],
+        },
+        {
+            "id": "silver.orders",
+            "type": "table",
+            "layer": "silver",
+            "path": artifact_paths["silver_orders"],
+        },
+        {
+            "id": "silver.orders_by_date_csv",
+            "type": "partitioned_table",
+            "layer": "silver",
+            "format": "csv",
+            "path": artifact_paths["silver_orders_by_date"],
+        },
+        {
+            "id": "silver.orders_by_date_parquet",
+            "type": "partitioned_table",
+            "layer": "silver",
+            "format": "parquet",
+            "path": artifact_paths["silver_orders_by_date_parquet"],
+        },
+        {
+            "id": "rejected.orders",
+            "type": "table",
+            "layer": "silver_audit",
+            "path": artifact_paths["rejected_orders"],
+        },
+        {
+            "id": "gold.revenue_metrics",
+            "type": "sql_model",
+            "layer": "gold",
+            "model_path": str(GOLD_SQL_PATH),
+            "path": artifact_paths["gold_revenue_metrics"],
+        },
+        {
+            "id": "gold.customer_metrics",
+            "type": "sql_model",
+            "layer": "gold",
+            "model_path": str(GOLD_CUSTOMER_SQL_PATH),
+            "path": artifact_paths["gold_customer_metrics"],
+        },
+        {
+            "id": "gold.category_metrics",
+            "type": "sql_model",
+            "layer": "gold",
+            "model_path": str(GOLD_CATEGORY_SQL_PATH),
+            "path": artifact_paths["gold_category_metrics"],
+        },
+        {
+            "id": "gold.rejection_metrics",
+            "type": "sql_model",
+            "layer": "gold",
+            "model_path": str(GOLD_REJECTION_SQL_PATH),
+            "path": artifact_paths["gold_rejection_metrics"],
+        },
+    ]
+    edges = [
+        {"from": "source.raw_orders", "to": "quality.raw_order_expectations"},
+        {"from": "source.raw_orders", "to": "history.source_ingestion"},
+        {"from": "source.raw_orders", "to": "bronze.orders"},
+        {"from": "bronze.orders", "to": "silver.orders"},
+        {"from": "bronze.orders", "to": "rejected.orders"},
+        {"from": "silver.orders", "to": "silver.orders_by_date_csv"},
+        {"from": "silver.orders", "to": "silver.orders_by_date_parquet"},
+        {"from": "silver.orders", "to": "gold.revenue_metrics"},
+        {"from": "silver.orders", "to": "gold.customer_metrics"},
+        {"from": "silver.orders", "to": "gold.category_metrics"},
+        {"from": "rejected.orders", "to": "gold.rejection_metrics"},
+    ]
+
+    return {
+        "version": 1,
+        "root": str(processed_dir),
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 def main(config_path=DEFAULT_CONFIG_PATH):
     started_at = datetime.now(timezone.utc)
     started_at_monotonic = time.perf_counter()
@@ -903,6 +1005,14 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     manifest["artifacts"]["silver_orders_by_date_parquet"] = str(
         processed_dir / "silver_orders_by_date_parquet"
+    )
+    manifest["lineage"] = build_lineage(
+        raw_path=raw_path,
+        processed_dir=processed_dir,
+        artifacts={
+            name: Path(path)
+            for name, path in manifest["artifacts"].items()
+        },
     )
     manifest["layers"]["silver"]["partitions"] = {
         "field": "order_date",
