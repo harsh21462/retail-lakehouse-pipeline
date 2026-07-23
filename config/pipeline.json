@@ -4,6 +4,7 @@
   "included_statuses": ["delivered"],
   "warning_thresholds": {
     "max_rejection_rate": 0.3,
+    "max_source_lag_days": 45,
     "min_silver_rows": 1
   }
 }

@@ -94,10 +94,12 @@ non-empty strings and `included_statuses` is a non-empty list of unique,
 non-empty strings before reading source data. Optional `order_date_start` and
 `order_date_end` values must use `YYYY-MM-DD`, and the start must be on or
 before the end. Optional `warning_thresholds` can set `max_rejection_rate`
-between 0 and 1 and `min_silver_rows` as a non-negative integer. Threshold
-breaches are written to the manifest as health warnings but do not fail the
-run; malformed threshold config fails fast. Bad operational config fails fast
-instead of silently rejecting every order. Relative `raw_path` and
+between 0 and 1, `min_silver_rows` as a non-negative integer, and
+`max_source_lag_days` as a non-negative integer freshness SLA against the
+latest source order date. Threshold breaches are written to the manifest as
+health warnings but do not fail the run; malformed threshold config fails fast.
+Bad operational config fails fast instead of silently rejecting every order.
+Relative `raw_path` and
 `processed_dir` values are
 resolved from the project root, while absolute paths are preserved. That keeps
 scheduled runs deterministic even when they start from a different working
@@ -116,6 +118,7 @@ Example windowed backfill config:
   "order_date_end": "2026-06-30",
   "warning_thresholds": {
     "max_rejection_rate": 0.2,
+    "max_source_lag_days": 2,
     "min_silver_rows": 1000
   }
 }

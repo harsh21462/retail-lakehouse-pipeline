@@ -37,6 +37,7 @@ INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_WARNING_THRESHOLDS = {
     "max_rejection_rate",
+    "max_source_lag_days",
     "min_silver_rows",
 }
 
@@ -142,6 +143,18 @@ def load_config(path=DEFAULT_CONFIG_PATH):
         ):
             raise ValueError(
                 "Configuration key 'warning_thresholds.min_silver_rows' "
+                "must be a non-negative integer"
+            )
+
+    if "max_source_lag_days" in warning_thresholds:
+        max_source_lag_days = warning_thresholds["max_source_lag_days"]
+        if (
+            isinstance(max_source_lag_days, bool)
+            or not isinstance(max_source_lag_days, int)
+            or max_source_lag_days < 0
+        ):
+            raise ValueError(
+                "Configuration key 'warning_thresholds.max_source_lag_days' "
                 "must be a non-negative integer"
             )
 
@@ -476,12 +489,15 @@ def build_health_warnings(
     silver_rows,
     rejected_rows,
     warning_thresholds=None,
+    as_of_date=None,
 ):
     warning_thresholds = warning_thresholds or {}
     warnings = []
     bronze_count = len(bronze_rows)
     silver_count = len(silver_rows)
     rejected_count = len(rejected_rows)
+    if as_of_date is None:
+        as_of_date = datetime.now(timezone.utc).date()
 
     if "max_rejection_rate" in warning_thresholds:
         threshold = warning_thresholds["max_rejection_rate"]
@@ -517,6 +533,30 @@ def build_health_warnings(
                     "threshold": {"min_silver_rows": threshold},
                 }
             )
+
+    if "max_source_lag_days" in warning_thresholds:
+        threshold = warning_thresholds["max_source_lag_days"]
+        order_dates = sorted(row["order_date"] for row in bronze_rows)
+        if order_dates:
+            latest_order_date = datetime.strptime(order_dates[-1], "%Y-%m-%d").date()
+            source_lag_days = (as_of_date - latest_order_date).days
+            if source_lag_days > threshold:
+                warnings.append(
+                    {
+                        "name": "source_lag_above_threshold",
+                        "severity": "warning",
+                        "message": (
+                            "Latest source order date is older than configured "
+                            "freshness threshold"
+                        ),
+                        "observed": {
+                            "latest_order_date": latest_order_date.isoformat(),
+                            "as_of_date": as_of_date.isoformat(),
+                            "source_lag_days": source_lag_days,
+                        },
+                        "threshold": {"max_source_lag_days": threshold},
+                    }
+                )
 
     return warnings
 
@@ -881,6 +921,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         silver_rows,
         rejected_rows,
         config["warning_thresholds"],
+        as_of_date=started_at.date(),
     )
     for warning in health_warnings:
         LOGGER.warning("%s: %s", warning["name"], warning["message"])

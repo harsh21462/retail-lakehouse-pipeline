@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from src.pipeline import (
@@ -334,6 +336,48 @@ def test_health_warnings_stay_empty_when_thresholds_are_not_breached():
     assert warnings == []
 
 
+def test_health_warnings_report_stale_source_data():
+    warnings = build_health_warnings(
+        bronze_rows=[
+            {"order_id": "1001", "order_date": "2026-06-01"},
+            {"order_id": "1002", "order_date": "2026-06-05"},
+        ],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[],
+        warning_thresholds={"max_source_lag_days": 7},
+        as_of_date=date(2026, 6, 20),
+    )
+
+    assert warnings == [
+        {
+            "name": "source_lag_above_threshold",
+            "severity": "warning",
+            "message": (
+                "Latest source order date is older than configured freshness "
+                "threshold"
+            ),
+            "observed": {
+                "latest_order_date": "2026-06-05",
+                "as_of_date": "2026-06-20",
+                "source_lag_days": 15,
+            },
+            "threshold": {"max_source_lag_days": 7},
+        }
+    ]
+
+
+def test_health_warnings_do_not_report_fresh_source_data():
+    warnings = build_health_warnings(
+        bronze_rows=[{"order_id": "1001", "order_date": "2026-06-05"}],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[],
+        warning_thresholds={"max_source_lag_days": 7},
+        as_of_date=date(2026, 6, 12),
+    )
+
+    assert warnings == []
+
+
 def test_manifest_profiles_handle_empty_and_populated_rows():
     raw_rows = [
         {
@@ -652,6 +696,16 @@ def test_load_config_validates_optional_warning_thresholds(tmp_path):
     )
 
     with pytest.raises(ValueError, match="unsupported"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"warning_thresholds": {"max_source_lag_days": -1}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_source_lag_days"):
         load_config(config_path)
 
 
