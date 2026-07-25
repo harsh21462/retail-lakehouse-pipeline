@@ -26,7 +26,28 @@ REJECTED_COLUMNS = [
 ]
 
 
-def run_gold_model(rows, sql_path):
+def _validate_model_columns(sql_path, actual_columns, expected_columns):
+    if expected_columns is None:
+        return
+
+    expected_columns = list(expected_columns)
+    if actual_columns == expected_columns:
+        return
+
+    missing_columns = [
+        column for column in expected_columns if column not in actual_columns
+    ]
+    unexpected_columns = [
+        column for column in actual_columns if column not in expected_columns
+    ]
+    raise ValueError(
+        "SQL model output contract mismatch for "
+        f"{sql_path}: expected columns {expected_columns}, got {actual_columns}; "
+        f"missing {missing_columns}, unexpected {unexpected_columns}"
+    )
+
+
+def run_gold_model(rows, sql_path, expected_columns=None):
     """Load silver rows into SQLite and execute a checked-in gold SQL model."""
     query = Path(sql_path).read_text(encoding="utf-8")
 
@@ -51,16 +72,19 @@ def run_gold_model(rows, sql_path):
             f"values ({', '.join('?' for _ in SILVER_COLUMNS)})",
             ([row[column] for column in SILVER_COLUMNS] for row in rows),
         )
-        results = connection.execute(query).fetchall()
+        cursor = connection.execute(query)
+        actual_columns = [column[0] for column in cursor.description or []]
+        _validate_model_columns(sql_path, actual_columns, expected_columns)
+        results = cursor.fetchall()
 
     return [dict(row) for row in results]
 
 
-def run_gold_revenue_model(rows, sql_path):
-    return run_gold_model(rows, sql_path)
+def run_gold_revenue_model(rows, sql_path, expected_columns=None):
+    return run_gold_model(rows, sql_path, expected_columns)
 
 
-def run_rejected_order_model(rows, sql_path):
+def run_rejected_order_model(rows, sql_path, expected_columns=None):
     """Load rejected rows into SQLite and execute a checked-in audit SQL model."""
     query = Path(sql_path).read_text(encoding="utf-8")
 
@@ -86,6 +110,9 @@ def run_rejected_order_model(rows, sql_path):
             f"values ({', '.join('?' for _ in REJECTED_COLUMNS)})",
             ([row[column] for column in REJECTED_COLUMNS] for row in rows),
         )
-        results = connection.execute(query).fetchall()
+        cursor = connection.execute(query)
+        actual_columns = [column[0] for column in cursor.description or []]
+        _validate_model_columns(sql_path, actual_columns, expected_columns)
+        results = cursor.fetchall()
 
     return [dict(row) for row in results]

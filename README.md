@@ -58,7 +58,8 @@ retail-lakehouse-pipeline/
 6. Write the silver layer as a flat CSV plus date-partitioned CSV and Parquet
    folders for incremental analytics reads.
 7. Execute version-controlled SQL models to build gold revenue, customer,
-   category, and rejection-impact summaries.
+   category, and rejection-impact summaries, validating each model's output
+   columns before gold CSVs are published.
 8. Run named data quality expectations, including config-aware checks that
    included order statuses and any configured order-date window match at least
    one source row, and persist their validation report.
@@ -136,6 +137,9 @@ The gold layers are defined in `sql/gold_revenue_metrics.sql`,
 `sql/gold_rejection_metrics.sql`. The pipeline loads the cleaned silver rows
 and rejected-order rows into in-memory SQLite tables and executes those models,
 so the SQL artifacts are tested and used in every local and CI pipeline run.
+Each gold model has an explicit output-column contract in the Python pipeline;
+renamed, missing, or extra SQL output columns fail fast before downstream CSV
+artifacts are replaced.
 
 ## Airflow Scheduling
 

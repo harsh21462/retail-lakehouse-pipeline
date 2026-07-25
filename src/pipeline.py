@@ -33,6 +33,22 @@ GOLD_SQL_PATH = ROOT / "sql" / "gold_revenue_metrics.sql"
 GOLD_CUSTOMER_SQL_PATH = ROOT / "sql" / "gold_customer_metrics.sql"
 GOLD_CATEGORY_SQL_PATH = ROOT / "sql" / "gold_category_metrics.sql"
 GOLD_REJECTION_SQL_PATH = ROOT / "sql" / "gold_rejection_metrics.sql"
+GOLD_REVENUE_FIELDS = [
+    "order_date", "category", "orders", "units", "revenue",
+    "average_order_value",
+]
+GOLD_CUSTOMER_FIELDS = [
+    "customer_id", "orders", "units", "revenue", "first_order_date",
+    "last_order_date",
+]
+GOLD_CATEGORY_FIELDS = [
+    "category", "orders", "customers", "units", "revenue",
+    "average_order_value", "first_order_date", "last_order_date",
+]
+GOLD_REJECTION_FIELDS = [
+    "rejection_reason", "status", "order_date", "category",
+    "rejected_orders", "rejected_units", "potential_revenue",
+]
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_WARNING_THRESHOLDS = {
@@ -586,19 +602,19 @@ def build_silver_orders(
 
 
 def build_gold_revenue(rows, sql_path=GOLD_SQL_PATH):
-    return run_gold_revenue_model(rows, sql_path)
+    return run_gold_revenue_model(rows, sql_path, GOLD_REVENUE_FIELDS)
 
 
 def build_gold_customer_metrics(rows, sql_path=GOLD_CUSTOMER_SQL_PATH):
-    return run_gold_model(rows, sql_path)
+    return run_gold_model(rows, sql_path, GOLD_CUSTOMER_FIELDS)
 
 
 def build_gold_category_metrics(rows, sql_path=GOLD_CATEGORY_SQL_PATH):
-    return run_gold_model(rows, sql_path)
+    return run_gold_model(rows, sql_path, GOLD_CATEGORY_FIELDS)
 
 
 def build_gold_rejection_metrics(rows, sql_path=GOLD_REJECTION_SQL_PATH):
-    return run_rejected_order_model(rows, sql_path)
+    return run_rejected_order_model(rows, sql_path, GOLD_REJECTION_FIELDS)
 
 
 def write_layer(path, rows, fieldnames):
@@ -962,43 +978,31 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
 
     gold_rows = build_gold_revenue(silver_rows)
-    gold_fields = [
-        "order_date", "category", "orders", "units", "revenue",
-        "average_order_value",
-    ]
-    write_layer(processed_dir / "gold_revenue_metrics.csv", gold_rows, gold_fields)
+    write_layer(
+        processed_dir / "gold_revenue_metrics.csv",
+        gold_rows,
+        GOLD_REVENUE_FIELDS,
+    )
 
     customer_gold_rows = build_gold_customer_metrics(silver_rows)
-    customer_gold_fields = [
-        "customer_id", "orders", "units", "revenue", "first_order_date",
-        "last_order_date",
-    ]
     write_layer(
         processed_dir / "gold_customer_metrics.csv",
         customer_gold_rows,
-        customer_gold_fields,
+        GOLD_CUSTOMER_FIELDS,
     )
 
     category_gold_rows = build_gold_category_metrics(silver_rows)
-    category_gold_fields = [
-        "category", "orders", "customers", "units", "revenue",
-        "average_order_value", "first_order_date", "last_order_date",
-    ]
     write_layer(
         processed_dir / "gold_category_metrics.csv",
         category_gold_rows,
-        category_gold_fields,
+        GOLD_CATEGORY_FIELDS,
     )
 
     rejection_gold_rows = build_gold_rejection_metrics(rejected_rows)
-    rejection_gold_fields = [
-        "rejection_reason", "status", "order_date", "category",
-        "rejected_orders", "rejected_units", "potential_revenue",
-    ]
     write_layer(
         processed_dir / "gold_rejection_metrics.csv",
         rejection_gold_rows,
-        rejection_gold_fields,
+        GOLD_REJECTION_FIELDS,
     )
 
     completed_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

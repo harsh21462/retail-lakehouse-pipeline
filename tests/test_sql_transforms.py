@@ -1,4 +1,7 @@
+import pytest
+
 from src.pipeline import (
+    build_gold_revenue,
     GOLD_CATEGORY_SQL_PATH,
     GOLD_CUSTOMER_SQL_PATH,
     GOLD_REJECTION_SQL_PATH,
@@ -67,6 +70,66 @@ def test_gold_revenue_model_aggregates_and_orders_silver_rows():
 
 def test_gold_revenue_model_handles_an_empty_silver_layer():
     assert run_gold_revenue_model([], GOLD_SQL_PATH) == []
+
+
+def test_gold_model_validates_expected_output_columns(tmp_path):
+    sql_path = tmp_path / "renamed_gold_model.sql"
+    sql_path.write_text(
+        """
+        select
+            order_date,
+            category,
+            count(distinct order_id) as order_count
+        from silver_orders
+        group by order_date, category
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="SQL model output contract mismatch",
+    ):
+        run_gold_model(
+            [],
+            sql_path,
+            expected_columns=["order_date", "category", "orders"],
+        )
+
+
+def test_pipeline_gold_revenue_contract_rejects_sql_drift(tmp_path):
+    sql_path = tmp_path / "gold_revenue_metrics.sql"
+    sql_path.write_text(
+        """
+        select
+            order_date,
+            category,
+            count(distinct order_id) as order_count,
+            sum(quantity) as units,
+            round(sum(revenue), 2) as revenue,
+            round(sum(revenue) / count(distinct order_id), 2) as average_order_value
+        from silver_orders
+        group by order_date, category
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing \\['orders'\\]"):
+        build_gold_revenue(
+            [
+                {
+                    "order_id": "1001",
+                    "customer_id": "C001",
+                    "order_date": "2026-06-01",
+                    "category": "Electronics",
+                    "product": "Keyboard",
+                    "quantity": 2,
+                    "unit_price": 1500.0,
+                    "revenue": 3000.0,
+                }
+            ],
+            sql_path=sql_path,
+        )
 
 
 def test_gold_customer_model_summarizes_customer_value():
