@@ -6,6 +6,7 @@ from src.pipeline import (
     build_artifact_inventory,
     build_health_warnings,
     build_lineage,
+    build_schema_contracts,
     load_ingestion_history,
     build_row_count_reconciliation,
     build_silver_orders,
@@ -525,6 +526,41 @@ def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):
         "from": "rejected.orders",
         "to": "gold.rejection_metrics",
     } in lineage["edges"]
+
+
+def test_schema_contracts_describe_published_layer_columns():
+    contracts = build_schema_contracts()
+
+    assert contracts["version"] == 1
+    assert contracts["layers"]["bronze_orders"]["columns"] == [
+        {"name": "order_id", "type": "string"},
+        {"name": "customer_id", "type": "string"},
+        {"name": "order_date", "type": "date"},
+        {"name": "category", "type": "string"},
+        {"name": "product", "type": "string"},
+        {"name": "quantity", "type": "string"},
+        {"name": "unit_price", "type": "string"},
+        {"name": "status", "type": "string"},
+    ]
+    assert contracts["layers"]["silver_orders"]["columns"] == [
+        {"name": "order_id", "type": "string"},
+        {"name": "customer_id", "type": "string"},
+        {"name": "order_date", "type": "date"},
+        {"name": "category", "type": "string"},
+        {"name": "product", "type": "string"},
+        {"name": "quantity", "type": "integer"},
+        {"name": "unit_price", "type": "float"},
+        {"name": "revenue", "type": "float"},
+    ]
+    assert contracts["layers"]["gold_rejection_metrics"]["columns"] == [
+        {"name": "rejection_reason", "type": "string"},
+        {"name": "status", "type": "string"},
+        {"name": "order_date", "type": "date"},
+        {"name": "category", "type": "string"},
+        {"name": "rejected_orders", "type": "integer"},
+        {"name": "rejected_units", "type": "integer"},
+        {"name": "potential_revenue", "type": "float"},
+    ]
 
 
 def test_ingestion_history_classifies_new_and_repeated_sources():

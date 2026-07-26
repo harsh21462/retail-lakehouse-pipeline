@@ -7,6 +7,7 @@ import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_schema_contracts,
     cli,
     main,
     parse_args,
@@ -319,6 +320,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         manifest["artifact_inventory"]["silver_orders_by_date_parquet"]["files"]
         == 2
     )
+    assert manifest["schema_contracts"] == build_schema_contracts()
     assert manifest["lineage"]["version"] == 1
     assert manifest["lineage"]["root"] == str(processed_dir)
     assert {node["id"] for node in manifest["lineage"]["nodes"]} == {

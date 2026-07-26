@@ -49,6 +49,65 @@ GOLD_REJECTION_FIELDS = [
     "rejection_reason", "status", "order_date", "category",
     "rejected_orders", "rejected_units", "potential_revenue",
 ]
+BRONZE_FIELD_TYPES = {
+    "order_id": "string",
+    "customer_id": "string",
+    "order_date": "date",
+    "category": "string",
+    "product": "string",
+    "quantity": "string",
+    "unit_price": "string",
+    "status": "string",
+}
+REJECTED_FIELD_TYPES = {
+    **BRONZE_FIELD_TYPES,
+    "rejection_reason": "string",
+}
+SILVER_FIELD_TYPES = {
+    "order_id": "string",
+    "customer_id": "string",
+    "order_date": "date",
+    "category": "string",
+    "product": "string",
+    "quantity": "integer",
+    "unit_price": "float",
+    "revenue": "float",
+}
+GOLD_FIELD_TYPES = {
+    "order_date": "date",
+    "category": "string",
+    "orders": "integer",
+    "units": "integer",
+    "revenue": "float",
+    "average_order_value": "float",
+}
+GOLD_CUSTOMER_FIELD_TYPES = {
+    "customer_id": "string",
+    "orders": "integer",
+    "units": "integer",
+    "revenue": "float",
+    "first_order_date": "date",
+    "last_order_date": "date",
+}
+GOLD_CATEGORY_FIELD_TYPES = {
+    "category": "string",
+    "orders": "integer",
+    "customers": "integer",
+    "units": "integer",
+    "revenue": "float",
+    "average_order_value": "float",
+    "first_order_date": "date",
+    "last_order_date": "date",
+}
+GOLD_REJECTION_FIELD_TYPES = {
+    "rejection_reason": "string",
+    "status": "string",
+    "order_date": "date",
+    "category": "string",
+    "rejected_orders": "integer",
+    "rejected_units": "integer",
+    "potential_revenue": "float",
+}
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_WARNING_THRESHOLDS = {
@@ -793,6 +852,29 @@ def build_artifact_inventory(artifacts):
     return inventory
 
 
+def build_schema_contracts():
+    def contract(fields):
+        return {
+            "columns": [
+                {"name": name, "type": field_type}
+                for name, field_type in fields.items()
+            ]
+        }
+
+    return {
+        "version": 1,
+        "layers": {
+            "bronze_orders": contract(BRONZE_FIELD_TYPES),
+            "rejected_orders": contract(REJECTED_FIELD_TYPES),
+            "silver_orders": contract(SILVER_FIELD_TYPES),
+            "gold_revenue_metrics": contract(GOLD_FIELD_TYPES),
+            "gold_customer_metrics": contract(GOLD_CUSTOMER_FIELD_TYPES),
+            "gold_category_metrics": contract(GOLD_CATEGORY_FIELD_TYPES),
+            "gold_rejection_metrics": contract(GOLD_REJECTION_FIELD_TYPES),
+        },
+    }
+
+
 def build_lineage(*, raw_path, processed_dir, artifacts):
     artifact_paths = {name: str(path) for name, path in artifacts.items()}
     source_node = {
@@ -1081,6 +1163,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
             for name, path in manifest["artifacts"].items()
         }
     )
+    manifest["schema_contracts"] = build_schema_contracts()
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
