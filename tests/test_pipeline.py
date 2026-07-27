@@ -170,6 +170,12 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     )
     assert quality_report["success"] is True
     assert quality_report["row_count"] == 3
+    assert quality_report["summary"] == {
+        "expectations": 10,
+        "passed": 10,
+        "failed": 0,
+        "failed_expectations": [],
+    }
     assert [item["expectation"] for item in quality_report["expectations"]] == [
         "dataset_is_not_empty",
         "required_columns_are_present",
@@ -276,7 +282,15 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_category": {"rows": 2},
         "gold_rejection": {"rows": 1},
     }
-    assert manifest["quality"] == {"success": True, "expectations": 10}
+    assert manifest["quality"] == {
+        "success": True,
+        "summary": {
+            "expectations": 10,
+            "passed": 10,
+            "failed": 0,
+            "failed_expectations": [],
+        },
+    }
     assert manifest["reconciliation"] == {
         "success": True,
         "bronze_rows": 3,
@@ -550,6 +564,12 @@ def test_pipeline_persists_quality_report_before_failing(tmp_path):
     )
     results = {item["expectation"]: item for item in quality_report["expectations"]}
     assert quality_report["success"] is False
+    assert quality_report["summary"] == {
+        "expectations": 10,
+        "passed": 9,
+        "failed": 1,
+        "failed_expectations": ["amounts_are_positive_numbers"],
+    }
     assert results["amounts_are_positive_numbers"]["observed"] == {
         "invalid_order_ids": ["1001"]
     }
@@ -631,7 +651,15 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
         "order_date_out_of_range": 1,
         "status_not_included": 1,
     }
-    assert manifest["quality"] == {"success": True, "expectations": 11}
+    assert manifest["quality"] == {
+        "success": True,
+        "summary": {
+            "expectations": 11,
+            "passed": 11,
+            "failed": 0,
+            "failed_expectations": [],
+        },
+    }
 
 
 def test_pipeline_persists_health_warnings_without_failing_run(tmp_path):
@@ -740,6 +768,12 @@ def test_pipeline_fails_when_date_window_matches_no_selected_rows(tmp_path):
         (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
     )
     results = {item["expectation"]: item for item in quality_report["expectations"]}
+    assert quality_report["summary"] == {
+        "expectations": 11,
+        "passed": 10,
+        "failed": 1,
+        "failed_expectations": ["selected_rows_match_config"],
+    }
     assert results["selected_rows_match_config"]["observed"] == {
         "included_statuses": ["delivered"],
         "order_date_start": "2026-06-02",
@@ -779,6 +813,12 @@ def test_pipeline_fails_when_configured_statuses_match_no_source_rows(tmp_path):
     )
     results = {item["expectation"]: item for item in quality_report["expectations"]}
     assert quality_report["success"] is False
+    assert quality_report["summary"] == {
+        "expectations": 10,
+        "passed": 9,
+        "failed": 1,
+        "failed_expectations": ["included_statuses_match_source_rows"],
+    }
     assert results["included_statuses_match_source_rows"]["observed"] == {
         "included_statuses": ["delivered"],
         "matching_rows": 0,

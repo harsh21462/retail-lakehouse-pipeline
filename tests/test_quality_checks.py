@@ -40,6 +40,12 @@ def test_quality_checks_pass_for_valid_rows():
 
     assert report["success"] is True
     assert report["row_count"] == 1
+    assert report["summary"] == {
+        "expectations": 9,
+        "passed": 9,
+        "failed": 0,
+        "failed_expectations": [],
+    }
     assert all(result["success"] for result in report["expectations"])
 
 
@@ -787,6 +793,15 @@ def test_quality_report_identifies_all_failed_expectations():
     results = {item["expectation"]: item for item in report["expectations"]}
 
     assert report["success"] is False
+    assert report["summary"] == {
+        "expectations": 9,
+        "passed": 7,
+        "failed": 2,
+        "failed_expectations": [
+            "order_id_is_unique",
+            "amounts_are_positive_numbers",
+        ],
+    }
     assert results["order_id_is_unique"]["observed"] == {
         "duplicate_order_ids": ["1001"]
     }

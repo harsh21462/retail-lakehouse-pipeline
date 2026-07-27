@@ -491,7 +491,7 @@ def build_run_manifest(
         },
         "quality": {
             "success": quality_report["success"],
-            "expectations": len(quality_report["expectations"]),
+            "summary": quality_report["summary"],
         },
         "reconciliation": build_row_count_reconciliation(
             bronze_rows,

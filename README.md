@@ -166,7 +166,8 @@ data/processed/
 Each successful run also writes:
 
 - `data_quality_report.json` with the overall validation status, source row
-  count, and observed values for every expectation.
+  count, a pass/fail expectation summary, and observed values for every
+  expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
   source and output paths, elapsed runtime, source file SHA-256, included order
   statuses, optional order-date window, source ingestion classification
@@ -176,7 +177,8 @@ Each successful run also writes:
   reconciliation, configured health warning thresholds and any warning
   breaches, silver partition values, per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
-  quality summary, generated artifact paths, schema contracts for published
+  quality summary with failed expectation names, generated artifact paths,
+  schema contracts for published
   bronze, silver, rejected-order, and gold outputs, and
   per-artifact existence/type/file-count/byte-size metadata. The manifest also
   includes a versioned lineage graph linking the raw source, quality report,

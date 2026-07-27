@@ -205,9 +205,18 @@ def evaluate_quality(
         *status_coverage_expectation,
         *selected_row_expectation,
     ]
+    failed_expectations = [
+        result["expectation"] for result in expectations if not result["success"]
+    ]
     return {
-        "success": all(result["success"] for result in expectations),
+        "success": not failed_expectations,
         "row_count": len(rows),
+        "summary": {
+            "expectations": len(expectations),
+            "passed": len(expectations) - len(failed_expectations),
+            "failed": len(failed_expectations),
+            "failed_expectations": failed_expectations,
+        },
         "expectations": expectations,
     }
 
