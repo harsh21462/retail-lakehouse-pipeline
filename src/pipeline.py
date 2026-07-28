@@ -319,6 +319,25 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+def artifact_sha256(path):
+    path = Path(path)
+    if path.is_file():
+        return file_sha256(path)
+    if not path.is_dir():
+        return None
+
+    digest = hashlib.sha256()
+    for file_path in _artifact_file_paths(path):
+        relative_path = file_path.relative_to(path).as_posix()
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        with file_path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def load_ingestion_history(path):
     path = Path(path)
     if not path.exists():
@@ -848,6 +867,7 @@ def build_artifact_inventory(artifacts):
             "type": artifact_type,
             "files": len(files),
             "bytes": sum(file_path.stat().st_size for file_path in files),
+            "sha256": artifact_sha256(artifact_path),
         }
     return inventory
 

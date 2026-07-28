@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from src.pipeline import (
+    artifact_sha256,
     build_artifact_inventory,
     build_health_warnings,
     build_lineage,
@@ -468,6 +469,7 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "type": "file",
         "files": 1,
         "bytes": file_path.stat().st_size,
+        "sha256": artifact_sha256(file_path),
     }
     assert inventory["silver_orders_by_date"] == {
         "path": str(directory_path),
@@ -475,6 +477,7 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "type": "directory",
         "files": 1,
         "bytes": (partition_path / "silver_orders.csv").stat().st_size,
+        "sha256": artifact_sha256(directory_path),
     }
     assert inventory["missing_report"] == {
         "path": str(tmp_path / "missing.json"),
@@ -482,7 +485,22 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "type": "missing",
         "files": 0,
         "bytes": 0,
+        "sha256": None,
     }
+
+
+def test_artifact_sha256_changes_when_directory_contents_change(tmp_path):
+    directory_path = tmp_path / "silver_orders_by_date"
+    partition_path = directory_path / "order_date=2026-06-01"
+    partition_path.mkdir(parents=True)
+    file_path = partition_path / "silver_orders.csv"
+    file_path.write_text("order_id\n1001\n", encoding="utf-8")
+
+    first_digest = artifact_sha256(directory_path)
+
+    file_path.write_text("order_id\n1002\n", encoding="utf-8")
+
+    assert artifact_sha256(directory_path) != first_digest
 
 
 def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):

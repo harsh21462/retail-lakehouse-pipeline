@@ -319,6 +319,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         assert artifact_stats["path"] == manifest["artifacts"][artifact_name]
         assert artifact_stats["exists"] is True
         assert artifact_stats["bytes"] > 0
+        assert artifact_stats["sha256"]
     assert manifest["artifact_inventory"]["silver_orders"]["type"] == "file"
     assert manifest["artifact_inventory"]["silver_orders"]["files"] == 1
     assert (
