@@ -108,6 +108,36 @@ GOLD_REJECTION_FIELD_TYPES = {
     "rejected_units": "integer",
     "potential_revenue": "float",
 }
+SQL_MODEL_DEFINITIONS = [
+    {
+        "name": "gold_revenue_metrics",
+        "path": GOLD_SQL_PATH,
+        "input_tables": ["silver_orders"],
+        "output_artifact": "gold_revenue_metrics",
+        "output_columns": GOLD_REVENUE_FIELDS,
+    },
+    {
+        "name": "gold_customer_metrics",
+        "path": GOLD_CUSTOMER_SQL_PATH,
+        "input_tables": ["silver_orders"],
+        "output_artifact": "gold_customer_metrics",
+        "output_columns": GOLD_CUSTOMER_FIELDS,
+    },
+    {
+        "name": "gold_category_metrics",
+        "path": GOLD_CATEGORY_SQL_PATH,
+        "input_tables": ["silver_orders"],
+        "output_artifact": "gold_category_metrics",
+        "output_columns": GOLD_CATEGORY_FIELDS,
+    },
+    {
+        "name": "gold_rejection_metrics",
+        "path": GOLD_REJECTION_SQL_PATH,
+        "input_tables": ["rejected_orders"],
+        "output_artifact": "gold_rejection_metrics",
+        "output_columns": GOLD_REJECTION_FIELDS,
+    },
+]
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_WARNING_THRESHOLDS = {
@@ -895,6 +925,29 @@ def build_schema_contracts():
     }
 
 
+def build_sql_model_inventory(artifact_paths=None):
+    artifact_paths = artifact_paths or {}
+    return {
+        "version": 1,
+        "models": [
+            {
+                "name": model["name"],
+                "path": str(model["path"]),
+                "sha256": file_sha256(model["path"]),
+                "input_tables": list(model["input_tables"]),
+                "output_artifact": model["output_artifact"],
+                "output_path": (
+                    str(artifact_paths[model["output_artifact"]])
+                    if model["output_artifact"] in artifact_paths
+                    else None
+                ),
+                "output_columns": list(model["output_columns"]),
+            }
+            for model in SQL_MODEL_DEFINITIONS
+        ],
+    }
+
+
 def build_lineage(*, raw_path, processed_dir, artifacts):
     artifact_paths = {name: str(path) for name, path in artifacts.items()}
     source_node = {
@@ -1184,6 +1237,12 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         }
     )
     manifest["schema_contracts"] = build_schema_contracts()
+    manifest["sql_models"] = build_sql_model_inventory(
+        {
+            name: Path(path)
+            for name, path in manifest["artifacts"].items()
+        }
+    )
     manifest_path = processed_dir / "pipeline_manifest.json"
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)

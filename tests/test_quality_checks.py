@@ -8,6 +8,7 @@ from src.pipeline import (
     build_health_warnings,
     build_lineage,
     build_schema_contracts,
+    build_sql_model_inventory,
     load_ingestion_history,
     build_row_count_reconciliation,
     build_silver_orders,
@@ -585,6 +586,43 @@ def test_schema_contracts_describe_published_layer_columns():
         {"name": "rejected_units", "type": "integer"},
         {"name": "potential_revenue", "type": "float"},
     ]
+
+
+def test_sql_model_inventory_describes_executable_gold_models(tmp_path):
+    artifact_paths = {
+        "gold_revenue_metrics": tmp_path / "gold_revenue_metrics.csv",
+        "gold_customer_metrics": tmp_path / "gold_customer_metrics.csv",
+        "gold_category_metrics": tmp_path / "gold_category_metrics.csv",
+        "gold_rejection_metrics": tmp_path / "gold_rejection_metrics.csv",
+    }
+
+    inventory = build_sql_model_inventory(artifact_paths)
+
+    assert inventory["version"] == 1
+    assert [model["name"] for model in inventory["models"]] == [
+        "gold_revenue_metrics",
+        "gold_customer_metrics",
+        "gold_category_metrics",
+        "gold_rejection_metrics",
+    ]
+    assert inventory["models"][0]["input_tables"] == ["silver_orders"]
+    assert inventory["models"][0]["output_artifact"] == "gold_revenue_metrics"
+    assert inventory["models"][0]["output_path"] == str(
+        tmp_path / "gold_revenue_metrics.csv"
+    )
+    assert inventory["models"][0]["output_columns"] == [
+        "order_date",
+        "category",
+        "orders",
+        "units",
+        "revenue",
+        "average_order_value",
+    ]
+    assert inventory["models"][0]["path"].endswith("gold_revenue_metrics.sql")
+    assert inventory["models"][0]["sha256"] == artifact_sha256(
+        inventory["models"][0]["path"]
+    )
+    assert inventory["models"][3]["input_tables"] == ["rejected_orders"]
 
 
 def test_ingestion_history_classifies_new_and_repeated_sources():

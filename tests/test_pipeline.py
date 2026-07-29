@@ -8,6 +8,7 @@ import pytest
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
     build_schema_contracts,
+    build_sql_model_inventory,
     cli,
     main,
     parse_args,
@@ -336,6 +337,14 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         == 2
     )
     assert manifest["schema_contracts"] == build_schema_contracts()
+    assert manifest["sql_models"] == build_sql_model_inventory(
+        {
+            "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
+            "gold_customer_metrics": processed_dir / "gold_customer_metrics.csv",
+            "gold_category_metrics": processed_dir / "gold_category_metrics.csv",
+            "gold_rejection_metrics": processed_dir / "gold_rejection_metrics.csv",
+        }
+    )
     assert manifest["lineage"]["version"] == 1
     assert manifest["lineage"]["root"] == str(processed_dir)
     assert {node["id"] for node in manifest["lineage"]["nodes"]} == {

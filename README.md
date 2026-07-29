@@ -70,8 +70,8 @@ retail-lakehouse-pipeline/
     status, row count reconciliation, source and silver data profiles,
     rejection reason counts, non-blocking health warnings, partition inventory,
     output artifact paths, artifact size inventory, and a machine-readable
-    schema contract, lineage graph, and deterministic artifact checksums for
-    each run.
+    schema contract, SQL model inventory, lineage graph, and deterministic
+    artifact checksums for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -184,8 +184,10 @@ Each successful run also writes:
   per-artifact existence/type/file-count/byte-size/SHA-256 metadata. File
   artifacts are hashed directly, while directory artifacts are hashed from
   sorted relative file paths and file contents so partitioned outputs can be
-  compared across runs. The manifest also includes a versioned lineage graph
-  linking the raw source, quality report,
+  compared across runs. The manifest also includes a versioned inventory of
+  executable SQL gold models with model paths, SHA-256 checksums, input tables,
+  output artifacts, and output-column contracts. The manifest also includes a
+  versioned lineage graph linking the raw source, quality report,
   ingestion history, bronze layer, silver layer, partitioned silver outputs,
   rejected-order audit table, and executable SQL gold models.
 - `ingestion_history.json` with every successfully processed source checksum,
