@@ -7,6 +7,7 @@ from src.pipeline import (
     build_artifact_inventory,
     build_health_warnings,
     build_lineage,
+    build_run_comparison,
     build_schema_contracts,
     build_sql_model_inventory,
     load_ingestion_history,
@@ -18,6 +19,7 @@ from src.pipeline import (
     load_config,
     raise_for_failed_reconciliation,
     resolve_pipeline_path,
+    load_previous_run_manifest,
     update_ingestion_history,
     write_json,
 )
@@ -302,6 +304,82 @@ def test_row_count_reconciliation_fails_on_unaccounted_rows():
     assert reconciliation["difference"] == 1
     with pytest.raises(ValueError, match="Row count reconciliation failed"):
         raise_for_failed_reconciliation(reconciliation)
+
+
+def test_run_comparison_reports_layer_deltas_and_status_changes():
+    previous_manifest = {
+        "run": {"completed_at_utc": "2026-07-29T01:00:00Z"},
+        "source": {"sha256": "previous"},
+        "quality": {"success": True},
+        "health": {"warning_count": 1},
+        "layers": {
+            "bronze": {"rows": 10},
+            "rejected": {"rows": 2},
+            "silver": {"rows": 8},
+            "gold": {"rows": 4},
+            "gold_customer": {"rows": 3},
+            "gold_category": {"rows": 2},
+            "gold_rejection": {"rows": 1},
+        },
+    }
+    current_manifest = {
+        "run": {"completed_at_utc": "2026-07-30T01:00:00Z"},
+        "source": {"sha256": "current"},
+        "quality": {"success": True},
+        "health": {"warning_count": 0},
+        "layers": {
+            "bronze": {"rows": 12},
+            "rejected": {"rows": 1},
+            "silver": {"rows": 11},
+            "gold": {"rows": 5},
+            "gold_customer": {"rows": 4},
+            "gold_category": {"rows": 2},
+            "gold_rejection": {"rows": 1},
+        },
+    }
+
+    comparison = build_run_comparison(current_manifest, previous_manifest)
+
+    assert comparison["previous_manifest_available"] is True
+    assert comparison["source_sha256_changed"] is True
+    assert comparison["quality_success_changed"] is False
+    assert comparison["warning_count"] == {"previous": 1, "current": 0, "delta": -1}
+    assert comparison["row_count_deltas"]["bronze"] == {
+        "previous": 10,
+        "current": 12,
+        "delta": 2,
+    }
+    assert comparison["row_count_deltas"]["rejected"] == {
+        "previous": 2,
+        "current": 1,
+        "delta": -1,
+    }
+
+
+def test_run_comparison_records_unavailable_previous_manifest():
+    comparison = build_run_comparison({}, unavailable_reason="invalid_json")
+
+    assert comparison == {
+        "version": 1,
+        "previous_manifest_available": False,
+        "unavailable_reason": "invalid_json",
+    }
+
+
+def test_load_previous_run_manifest_handles_missing_and_invalid_json(tmp_path):
+    missing_manifest, missing_reason = load_previous_run_manifest(
+        tmp_path / "missing_manifest.json"
+    )
+    assert missing_manifest is None
+    assert missing_reason == "not_found"
+
+    manifest_path = tmp_path / "pipeline_manifest.json"
+    manifest_path.write_text("{not-json", encoding="utf-8")
+
+    invalid_manifest, invalid_reason = load_previous_run_manifest(manifest_path)
+
+    assert invalid_manifest is None
+    assert invalid_reason == "invalid_json"
 
 
 def test_health_warnings_report_threshold_breaches():

@@ -608,6 +608,93 @@ def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
     }
 
 
+def load_previous_run_manifest(path):
+    path = Path(path)
+    if not path.exists():
+        return None, "not_found"
+
+    try:
+        with path.open(encoding="utf-8") as file:
+            manifest = json.load(file)
+    except json.JSONDecodeError:
+        return None, "invalid_json"
+
+    if not isinstance(manifest, dict):
+        return None, "manifest_root_not_object"
+    return manifest, None
+
+
+def build_run_comparison(
+    current_manifest,
+    previous_manifest=None,
+    unavailable_reason=None,
+):
+    if previous_manifest is None:
+        return {
+            "version": 1,
+            "previous_manifest_available": False,
+            "unavailable_reason": unavailable_reason or "not_found",
+        }
+
+    layer_names = [
+        "bronze",
+        "rejected",
+        "silver",
+        "gold",
+        "gold_customer",
+        "gold_category",
+        "gold_rejection",
+    ]
+
+    def layer_rows(manifest, layer_name):
+        return manifest.get("layers", {}).get(layer_name, {}).get("rows")
+
+    row_count_deltas = {}
+    for layer_name in layer_names:
+        previous_rows = layer_rows(previous_manifest, layer_name)
+        current_rows = layer_rows(current_manifest, layer_name)
+        delta = None
+        if isinstance(previous_rows, int) and isinstance(current_rows, int):
+            delta = current_rows - previous_rows
+        row_count_deltas[layer_name] = {
+            "previous": previous_rows,
+            "current": current_rows,
+            "delta": delta,
+        }
+
+    previous_source_sha = previous_manifest.get("source", {}).get("sha256")
+    current_source_sha = current_manifest.get("source", {}).get("sha256")
+    previous_quality_success = previous_manifest.get("quality", {}).get("success")
+    current_quality_success = current_manifest.get("quality", {}).get("success")
+    previous_warning_count = previous_manifest.get("health", {}).get("warning_count")
+    current_warning_count = current_manifest.get("health", {}).get("warning_count")
+    warning_count_delta = None
+    if isinstance(previous_warning_count, int) and isinstance(
+        current_warning_count,
+        int,
+    ):
+        warning_count_delta = current_warning_count - previous_warning_count
+
+    return {
+        "version": 1,
+        "previous_manifest_available": True,
+        "previous_completed_at_utc": previous_manifest.get("run", {}).get(
+            "completed_at_utc"
+        ),
+        "current_completed_at_utc": current_manifest.get("run", {}).get(
+            "completed_at_utc"
+        ),
+        "source_sha256_changed": previous_source_sha != current_source_sha,
+        "quality_success_changed": previous_quality_success != current_quality_success,
+        "warning_count": {
+            "previous": previous_warning_count,
+            "current": current_warning_count,
+            "delta": warning_count_delta,
+        },
+        "row_count_deltas": row_count_deltas,
+    }
+
+
 def build_health_warnings(
     bronze_rows,
     silver_rows,
@@ -1244,6 +1331,14 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         }
     )
     manifest_path = processed_dir / "pipeline_manifest.json"
+    previous_manifest, previous_manifest_unavailable_reason = (
+        load_previous_run_manifest(manifest_path)
+    )
+    manifest["run_comparison"] = build_run_comparison(
+        manifest,
+        previous_manifest=previous_manifest,
+        unavailable_reason=previous_manifest_unavailable_reason,
+    )
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
 

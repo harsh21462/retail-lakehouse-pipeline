@@ -300,6 +300,11 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "accounted_rows": 3,
         "difference": 0,
     }
+    assert manifest["run_comparison"] == {
+        "version": 1,
+        "previous_manifest_available": False,
+        "unavailable_reason": "not_found",
+    }
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),
@@ -927,6 +932,23 @@ def test_pipeline_marks_repeated_source_content_from_new_path(tmp_path):
         "previously_seen": True,
         "run_count_for_source": 2,
         "known_paths_for_source": [str(second_raw_path), str(first_raw_path)],
+    }
+    assert manifest["run_comparison"]["previous_manifest_available"] is True
+    assert manifest["run_comparison"]["source_sha256_changed"] is False
+    assert manifest["run_comparison"]["warning_count"] == {
+        "previous": 0,
+        "current": 0,
+        "delta": 0,
+    }
+    assert manifest["run_comparison"]["row_count_deltas"]["bronze"] == {
+        "previous": 1,
+        "current": 1,
+        "delta": 0,
+    }
+    assert manifest["run_comparison"]["row_count_deltas"]["silver"] == {
+        "previous": 1,
+        "current": 1,
+        "delta": 0,
     }
     history = json.loads(
         (processed_dir / "ingestion_history.json").read_text(encoding="utf-8")
