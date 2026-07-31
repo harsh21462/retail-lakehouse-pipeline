@@ -675,6 +675,34 @@ def build_run_comparison(
     ):
         warning_count_delta = current_warning_count - previous_warning_count
 
+    previous_artifacts = previous_manifest.get("artifact_inventory", {})
+    current_artifacts = current_manifest.get("artifact_inventory", {})
+    if not isinstance(previous_artifacts, dict):
+        previous_artifacts = {}
+    if not isinstance(current_artifacts, dict):
+        current_artifacts = {}
+    artifact_checksum_changes = {}
+    for artifact_name in sorted(set(previous_artifacts) | set(current_artifacts)):
+        previous_artifact = previous_artifacts.get(artifact_name, {})
+        current_artifact = current_artifacts.get(artifact_name, {})
+        if not isinstance(previous_artifact, dict):
+            previous_artifact = {}
+        if not isinstance(current_artifact, dict):
+            current_artifact = {}
+        previous_sha256 = previous_artifact.get("sha256")
+        current_sha256 = current_artifact.get("sha256")
+        sha256_changed = None
+        if previous_sha256 is not None and current_sha256 is not None:
+            sha256_changed = previous_sha256 != current_sha256
+
+        artifact_checksum_changes[artifact_name] = {
+            "previous_exists": previous_artifact.get("exists"),
+            "current_exists": current_artifact.get("exists"),
+            "previous_sha256": previous_sha256,
+            "current_sha256": current_sha256,
+            "sha256_changed": sha256_changed,
+        }
+
     return {
         "version": 1,
         "previous_manifest_available": True,
@@ -692,6 +720,7 @@ def build_run_comparison(
             "delta": warning_count_delta,
         },
         "row_count_deltas": row_count_deltas,
+        "artifact_checksum_changes": artifact_checksum_changes,
     }
 
 

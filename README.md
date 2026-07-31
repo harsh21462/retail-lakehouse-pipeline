@@ -70,7 +70,7 @@ retail-lakehouse-pipeline/
     status, row count reconciliation, source and silver data profiles,
     rejection reason counts, non-blocking health warnings, run-to-run comparison
     against the previous manifest, partition inventory, output artifact paths,
-    artifact size inventory, and a machine-readable
+    artifact size and checksum inventory, and a machine-readable
     schema contract, SQL model inventory, lineage graph, and deterministic
     artifact checksums for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
@@ -192,9 +192,9 @@ Each successful run also writes:
   ingestion history, bronze layer, silver layer, partitioned silver outputs,
   rejected-order audit table, and executable SQL gold models. When a previous
   manifest exists, `run_comparison` records layer row-count deltas, source
-  checksum changes, quality status changes, and warning-count deltas; if a
-  prior manifest is missing or malformed, the comparison records the reason
-  instead of fabricating deltas.
+  checksum changes, quality status changes, warning-count deltas, and
+  per-artifact existence/checksum changes; if a prior manifest is missing or
+  malformed, the comparison records the reason instead of fabricating deltas.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps

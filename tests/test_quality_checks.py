@@ -312,6 +312,16 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "source": {"sha256": "previous"},
         "quality": {"success": True},
         "health": {"warning_count": 1},
+        "artifact_inventory": {
+            "silver_orders": {
+                "exists": True,
+                "sha256": "previous-silver",
+            },
+            "gold_revenue_metrics": {
+                "exists": True,
+                "sha256": "stable-gold",
+            },
+        },
         "layers": {
             "bronze": {"rows": 10},
             "rejected": {"rows": 2},
@@ -327,6 +337,20 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "source": {"sha256": "current"},
         "quality": {"success": True},
         "health": {"warning_count": 0},
+        "artifact_inventory": {
+            "silver_orders": {
+                "exists": True,
+                "sha256": "current-silver",
+            },
+            "gold_revenue_metrics": {
+                "exists": True,
+                "sha256": "stable-gold",
+            },
+            "gold_customer_metrics": {
+                "exists": True,
+                "sha256": "new-customer",
+            },
+        },
         "layers": {
             "bronze": {"rows": 12},
             "rejected": {"rows": 1},
@@ -354,6 +378,29 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "current": 1,
         "delta": -1,
     }
+    assert comparison["artifact_checksum_changes"] == {
+        "gold_customer_metrics": {
+            "previous_exists": None,
+            "current_exists": True,
+            "previous_sha256": None,
+            "current_sha256": "new-customer",
+            "sha256_changed": None,
+        },
+        "gold_revenue_metrics": {
+            "previous_exists": True,
+            "current_exists": True,
+            "previous_sha256": "stable-gold",
+            "current_sha256": "stable-gold",
+            "sha256_changed": False,
+        },
+        "silver_orders": {
+            "previous_exists": True,
+            "current_exists": True,
+            "previous_sha256": "previous-silver",
+            "current_sha256": "current-silver",
+            "sha256_changed": True,
+        },
+    }
 
 
 def test_run_comparison_records_unavailable_previous_manifest():
@@ -363,6 +410,23 @@ def test_run_comparison_records_unavailable_previous_manifest():
         "version": 1,
         "previous_manifest_available": False,
         "unavailable_reason": "invalid_json",
+    }
+
+
+def test_run_comparison_tolerates_malformed_artifact_inventory():
+    comparison = build_run_comparison(
+        {"artifact_inventory": {"silver_orders": "not-an-object"}},
+        {"artifact_inventory": ["not", "an", "object"]},
+    )
+
+    assert comparison["artifact_checksum_changes"] == {
+        "silver_orders": {
+            "previous_exists": None,
+            "current_exists": None,
+            "previous_sha256": None,
+            "current_sha256": None,
+            "sha256_changed": None,
+        }
     }
 
 
