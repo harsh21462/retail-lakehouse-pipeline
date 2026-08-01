@@ -1041,6 +1041,63 @@ def build_schema_contracts():
     }
 
 
+def _read_csv_header(path):
+    with Path(path).open(newline="", encoding="utf-8") as file:
+        return next(csv.reader(file), [])
+
+
+def build_schema_contract_validation(artifact_paths, schema_contracts):
+    layer_results = {}
+    for layer_name, contract in sorted(schema_contracts["layers"].items()):
+        expected_columns = [column["name"] for column in contract["columns"]]
+        artifact_path = Path(artifact_paths[layer_name])
+        actual_columns = []
+        if artifact_path.is_file():
+            actual_columns = _read_csv_header(artifact_path)
+
+        missing_columns = [
+            column for column in expected_columns if column not in actual_columns
+        ]
+        unexpected_columns = [
+            column for column in actual_columns if column not in expected_columns
+        ]
+        layer_success = (
+            artifact_path.is_file()
+            and actual_columns == expected_columns
+            and not missing_columns
+            and not unexpected_columns
+        )
+        layer_results[layer_name] = {
+            "success": layer_success,
+            "path": str(artifact_path),
+            "expected_columns": expected_columns,
+            "actual_columns": actual_columns,
+            "missing_columns": missing_columns,
+            "unexpected_columns": unexpected_columns,
+            "order_matches": actual_columns == expected_columns,
+        }
+
+    failed_layers = [
+        layer_name
+        for layer_name, result in layer_results.items()
+        if not result["success"]
+    ]
+    return {
+        "version": 1,
+        "success": not failed_layers,
+        "failed_layers": failed_layers,
+        "layers": layer_results,
+    }
+
+
+def raise_for_failed_schema_contract_validation(validation):
+    if not validation["success"]:
+        raise ValueError(
+            "Schema contract validation failed for layers: "
+            f"{', '.join(validation['failed_layers'])}"
+        )
+
+
 def build_sql_model_inventory(artifact_paths=None):
     artifact_paths = artifact_paths or {}
     return {
@@ -1353,11 +1410,19 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         }
     )
     manifest["schema_contracts"] = build_schema_contracts()
+    artifact_paths = {
+        name: Path(path)
+        for name, path in manifest["artifacts"].items()
+    }
+    manifest["schema_contract_validation"] = build_schema_contract_validation(
+        artifact_paths,
+        manifest["schema_contracts"],
+    )
+    raise_for_failed_schema_contract_validation(
+        manifest["schema_contract_validation"]
+    )
     manifest["sql_models"] = build_sql_model_inventory(
-        {
-            name: Path(path)
-            for name, path in manifest["artifacts"].items()
-        }
+        artifact_paths
     )
     manifest_path = processed_dir / "pipeline_manifest.json"
     previous_manifest, previous_manifest_unavailable_reason = (

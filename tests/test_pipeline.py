@@ -7,6 +7,7 @@ import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_schema_contract_validation,
     build_schema_contracts,
     build_sql_model_inventory,
     cli,
@@ -342,6 +343,23 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         == 2
     )
     assert manifest["schema_contracts"] == build_schema_contracts()
+    assert manifest["schema_contract_validation"]["success"] is True
+    assert manifest["schema_contract_validation"]["failed_layers"] == []
+    assert (
+        manifest["schema_contract_validation"]["layers"]["silver_orders"][
+            "actual_columns"
+        ]
+        == [
+            "order_id",
+            "customer_id",
+            "order_date",
+            "category",
+            "product",
+            "quantity",
+            "unit_price",
+            "revenue",
+        ]
+    )
     assert manifest["sql_models"] == build_sql_model_inventory(
         {
             "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
@@ -841,6 +859,71 @@ def test_pipeline_fails_when_configured_statuses_match_no_source_rows(tmp_path):
     }
     assert not (processed_dir / "bronze_orders.csv").exists()
     assert not (processed_dir / "silver_orders.csv").exists()
+
+
+def test_schema_contract_validation_detects_published_column_drift(tmp_path):
+    silver_path = tmp_path / "silver_orders.csv"
+    silver_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,revenue\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,3000.0\n",
+        encoding="utf-8",
+    )
+    contracts = {
+        "version": 1,
+        "layers": {
+            "silver_orders": {
+                "columns": [
+                    {"name": "order_id", "type": "string"},
+                    {"name": "customer_id", "type": "string"},
+                    {"name": "order_date", "type": "date"},
+                    {"name": "category", "type": "string"},
+                    {"name": "product", "type": "string"},
+                    {"name": "quantity", "type": "integer"},
+                    {"name": "unit_price", "type": "float"},
+                    {"name": "revenue", "type": "float"},
+                ]
+            }
+        },
+    }
+
+    validation = build_schema_contract_validation(
+        {"silver_orders": silver_path},
+        contracts,
+    )
+
+    assert validation == {
+        "version": 1,
+        "success": False,
+        "failed_layers": ["silver_orders"],
+        "layers": {
+            "silver_orders": {
+                "success": False,
+                "path": str(silver_path),
+                "expected_columns": [
+                    "order_id",
+                    "customer_id",
+                    "order_date",
+                    "category",
+                    "product",
+                    "quantity",
+                    "unit_price",
+                    "revenue",
+                ],
+                "actual_columns": [
+                    "order_id",
+                    "customer_id",
+                    "order_date",
+                    "category",
+                    "product",
+                    "quantity",
+                    "revenue",
+                ],
+                "missing_columns": ["unit_price"],
+                "unexpected_columns": [],
+                "order_matches": False,
+            }
+        },
+    }
 
 
 def test_pipeline_fails_when_silver_reconciliation_does_not_balance(
