@@ -2,17 +2,20 @@ import csv
 import hashlib
 import json
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_partitioned_parquet_contract_validation,
     build_schema_contract_validation,
     build_schema_contracts,
     build_sql_model_inventory,
     cli,
     main,
     parse_args,
+    raise_for_failed_partitioned_parquet_contract_validation,
     write_partitioned_layer,
     write_partitioned_parquet_layer,
     write_csv,
@@ -345,6 +348,21 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["schema_contracts"] == build_schema_contracts()
     assert manifest["schema_contract_validation"]["success"] is True
     assert manifest["schema_contract_validation"]["failed_layers"] == []
+    parquet_contract = manifest["partition_contract_validation"][
+        "silver_orders_by_date_parquet"
+    ]
+    assert parquet_contract["success"] is True
+    assert parquet_contract["partition_count"] == 2
+    assert parquet_contract["expected_physical_columns"] == [
+        "order_id",
+        "customer_id",
+        "category",
+        "product",
+        "quantity",
+        "unit_price",
+        "revenue",
+    ]
+    assert parquet_contract["failed_partitions"] == []
     assert (
         manifest["schema_contract_validation"]["layers"]["silver_orders"][
             "actual_columns"
@@ -924,6 +942,39 @@ def test_schema_contract_validation_detects_published_column_drift(tmp_path):
             }
         },
     }
+
+
+def test_partitioned_parquet_contract_validation_detects_schema_drift(tmp_path):
+    base_dir = tmp_path / "silver_orders_by_date_parquet"
+    partition_dir = base_dir / "order_date=2026-06-01"
+    partition_dir.mkdir(parents=True)
+    table = pa.table(
+        {
+            "order_id": ["1001"],
+            "customer_id": ["C001"],
+            "category": ["Electronics"],
+            "product": ["Keyboard"],
+            "quantity": [2],
+            "revenue": [3000.0],
+        }
+    )
+    pq.write_table(table, partition_dir / "silver_orders.parquet")
+
+    validation = build_partitioned_parquet_contract_validation(
+        parquet_base_dir=base_dir,
+        contract=build_schema_contracts()["layers"]["silver_orders"],
+        partition_field="order_date",
+        filename="silver_orders.parquet",
+    )
+
+    assert validation["success"] is False
+    assert validation["failed_partitions"] == ["2026-06-01"]
+    assert validation["partitions"][0]["missing_columns"] == ["unit_price"]
+    with pytest.raises(
+        ValueError,
+        match="Partitioned Parquet contract validation failed",
+    ):
+        raise_for_failed_partitioned_parquet_contract_validation(validation)
 
 
 def test_pipeline_fails_when_silver_reconciliation_does_not_balance(

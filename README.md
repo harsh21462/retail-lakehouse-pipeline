@@ -72,7 +72,8 @@ retail-lakehouse-pipeline/
     against the previous manifest, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
     schema contract, published-artifact schema contract validation, SQL model
-    inventory, lineage graph, and deterministic artifact checksums for each run.
+    inventory, partitioned Parquet schema validation, lineage graph, and
+    deterministic artifact checksums for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -182,8 +183,11 @@ Each successful run also writes:
   quality summary with failed expectation names, generated artifact paths,
   schema contracts for published
   bronze, silver, rejected-order, and gold outputs, contract validation results
-  proving the emitted CSV headers still match those declared schemas, and
-  per-artifact existence/type/file-count/byte-size/SHA-256 metadata. File
+  proving the emitted CSV headers still match those declared schemas,
+  partitioned Parquet contract validation proving each physical partition file
+  still matches the declared silver schema excluding the directory partition
+  column, and per-artifact existence/type/file-count/byte-size/SHA-256 metadata.
+  File
   artifacts are hashed directly, while directory artifacts are hashed from
   sorted relative file paths and file contents so partitioned outputs can be
   compared across runs. The manifest also includes a versioned inventory of

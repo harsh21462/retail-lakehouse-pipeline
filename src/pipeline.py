@@ -1098,6 +1098,122 @@ def raise_for_failed_schema_contract_validation(validation):
         )
 
 
+def _normalize_arrow_type(arrow_type):
+    arrow_type_name = str(arrow_type)
+    if arrow_type_name == "double":
+        return "float"
+    if arrow_type_name.startswith("int"):
+        return "integer"
+    return arrow_type_name
+
+
+def build_partitioned_parquet_contract_validation(
+    *,
+    parquet_base_dir,
+    contract,
+    partition_field,
+    filename,
+):
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError(
+            "Parquet schema validation requires pyarrow. "
+            "Install requirements-dev.txt."
+        ) from exc
+
+    parquet_base_dir = Path(parquet_base_dir)
+    expected_types = {
+        column["name"]: column["type"]
+        for column in contract["columns"]
+        if column["name"] != partition_field
+    }
+    expected_columns = list(expected_types)
+    partition_dirs = sorted(parquet_base_dir.glob(f"{partition_field}=*"))
+    partitions = []
+
+    for partition_dir in partition_dirs:
+        partition_value = partition_dir.name.split("=", 1)[1]
+        parquet_path = partition_dir / filename
+        actual_types = {}
+        actual_columns = []
+        read_error = None
+        if parquet_path.is_file():
+            try:
+                schema = pq.read_schema(parquet_path)
+                actual_columns = schema.names
+                actual_types = {
+                    field.name: _normalize_arrow_type(field.type)
+                    for field in schema
+                }
+            except Exception as exc:  # pragma: no cover - exact pyarrow errors vary.
+                read_error = str(exc)
+
+        missing_columns = [
+            column for column in expected_columns if column not in actual_columns
+        ]
+        unexpected_columns = [
+            column for column in actual_columns if column not in expected_columns
+        ]
+        type_mismatches = {
+            column: {
+                "expected": expected_type,
+                "actual": actual_types.get(column),
+            }
+            for column, expected_type in expected_types.items()
+            if column in actual_types and actual_types[column] != expected_type
+        }
+        partition_success = (
+            parquet_path.is_file()
+            and read_error is None
+            and actual_columns == expected_columns
+            and not missing_columns
+            and not unexpected_columns
+            and not type_mismatches
+        )
+        partitions.append(
+            {
+                "success": partition_success,
+                "partition_value": partition_value,
+                "path": str(parquet_path),
+                "expected_columns": expected_columns,
+                "actual_columns": actual_columns,
+                "missing_columns": missing_columns,
+                "unexpected_columns": unexpected_columns,
+                "type_mismatches": type_mismatches,
+                "read_error": read_error,
+                "order_matches": actual_columns == expected_columns,
+            }
+        )
+
+    failed_partitions = [
+        partition["partition_value"]
+        for partition in partitions
+        if not partition["success"]
+    ]
+    return {
+        "version": 1,
+        "success": bool(partitions) and not failed_partitions,
+        "artifact": "silver_orders_by_date_parquet",
+        "path": str(parquet_base_dir),
+        "partition_field": partition_field,
+        "file_name": filename,
+        "expected_physical_columns": expected_columns,
+        "partition_count": len(partitions),
+        "failed_partitions": failed_partitions,
+        "partitions": partitions,
+    }
+
+
+def raise_for_failed_partitioned_parquet_contract_validation(validation):
+    if not validation["success"]:
+        raise ValueError(
+            "Partitioned Parquet contract validation failed for "
+            f"{validation['artifact']}: "
+            f"{', '.join(validation['failed_partitions']) or 'no partitions'}"
+        )
+
+
 def build_sql_model_inventory(artifact_paths=None):
     artifact_paths = artifact_paths or {}
     return {
@@ -1420,6 +1536,19 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     raise_for_failed_schema_contract_validation(
         manifest["schema_contract_validation"]
+    )
+    manifest["partition_contract_validation"] = {
+        "silver_orders_by_date_parquet": (
+            build_partitioned_parquet_contract_validation(
+                parquet_base_dir=processed_dir / "silver_orders_by_date_parquet",
+                contract=manifest["schema_contracts"]["layers"]["silver_orders"],
+                partition_field="order_date",
+                filename="silver_orders.parquet",
+            )
+        )
+    }
+    raise_for_failed_partitioned_parquet_contract_validation(
+        manifest["partition_contract_validation"]["silver_orders_by_date_parquet"]
     )
     manifest["sql_models"] = build_sql_model_inventory(
         artifact_paths
