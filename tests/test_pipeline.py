@@ -8,6 +8,7 @@ import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_schema_contract_data_validation,
     build_partitioned_parquet_contract_validation,
     build_schema_contract_validation,
     build_schema_contracts,
@@ -16,6 +17,7 @@ from src.pipeline import (
     main,
     parse_args,
     raise_for_failed_partitioned_parquet_contract_validation,
+    raise_for_failed_schema_contract_data_validation,
     write_partitioned_layer,
     write_partitioned_parquet_layer,
     write_csv,
@@ -348,6 +350,20 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["schema_contracts"] == build_schema_contracts()
     assert manifest["schema_contract_validation"]["success"] is True
     assert manifest["schema_contract_validation"]["failed_layers"] == []
+    assert manifest["schema_contract_data_validation"]["success"] is True
+    assert manifest["schema_contract_data_validation"]["failed_layers"] == []
+    assert (
+        manifest["schema_contract_data_validation"]["layers"]["silver_orders"][
+            "rows_checked"
+        ]
+        == 2
+    )
+    assert (
+        manifest["schema_contract_data_validation"]["layers"]["silver_orders"][
+            "invalid_value_count"
+        ]
+        == 0
+    )
     parquet_contract = manifest["partition_contract_validation"][
         "silver_orders_by_date_parquet"
     ]
@@ -942,6 +958,61 @@ def test_schema_contract_validation_detects_published_column_drift(tmp_path):
             }
         },
     }
+
+
+def test_schema_contract_data_validation_detects_published_type_drift(tmp_path):
+    silver_path = tmp_path / "silver_orders.csv"
+    silver_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,revenue\n"
+        "1001,C001,2026-06-01,Electronics,Keyboard,2,1500.0,3000.0\n"
+        "1002,C002,not-a-date,Home,Chair,one,2500.0,2500.0\n",
+        encoding="utf-8",
+    )
+    contracts = {
+        "version": 1,
+        "layers": {
+            "silver_orders": build_schema_contracts()["layers"]["silver_orders"]
+        },
+    }
+
+    validation = build_schema_contract_data_validation(
+        {"silver_orders": silver_path},
+        contracts,
+    )
+
+    assert validation == {
+        "version": 1,
+        "success": False,
+        "failed_layers": ["silver_orders"],
+        "max_invalid_values": 20,
+        "layers": {
+            "silver_orders": {
+                "success": False,
+                "path": str(silver_path),
+                "rows_checked": 2,
+                "invalid_value_count": 2,
+                "invalid_values": [
+                    {
+                        "row_number": 3,
+                        "column": "order_date",
+                        "value": "not-a-date",
+                        "expected_type": "date",
+                    },
+                    {
+                        "row_number": 3,
+                        "column": "quantity",
+                        "value": "one",
+                        "expected_type": "integer",
+                    },
+                ],
+            }
+        },
+    }
+    with pytest.raises(
+        ValueError,
+        match="Schema contract data validation failed",
+    ):
+        raise_for_failed_schema_contract_data_validation(validation)
 
 
 def test_partitioned_parquet_contract_validation_detects_schema_drift(tmp_path):

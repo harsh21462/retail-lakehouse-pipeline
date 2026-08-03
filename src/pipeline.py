@@ -4,6 +4,7 @@ from collections import Counter
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -1098,6 +1099,100 @@ def raise_for_failed_schema_contract_validation(validation):
         )
 
 
+def _matches_contract_type(value, expected_type):
+    if value is None:
+        return False
+    if expected_type == "string":
+        return True
+    if expected_type == "date":
+        return _is_iso_date(value)
+    if expected_type == "integer":
+        try:
+            int(value)
+        except (TypeError, ValueError):
+            return False
+        return str(value).strip() == str(int(value))
+    if expected_type == "float":
+        try:
+            return math.isfinite(float(value))
+        except (TypeError, ValueError):
+            return False
+    raise ValueError(f"Unsupported schema contract type: {expected_type}")
+
+
+def build_schema_contract_data_validation(
+    artifact_paths,
+    schema_contracts,
+    max_invalid_values=20,
+):
+    layer_results = {}
+    for layer_name, contract in sorted(schema_contracts["layers"].items()):
+        artifact_path = Path(artifact_paths[layer_name])
+        expected_columns = [column["name"] for column in contract["columns"]]
+        expected_types = {
+            column["name"]: column["type"] for column in contract["columns"]
+        }
+        actual_columns = []
+        rows_checked = 0
+        invalid_value_count = 0
+        invalid_values = []
+
+        if artifact_path.is_file():
+            with artifact_path.open(newline="", encoding="utf-8") as file:
+                reader = csv.DictReader(file)
+                actual_columns = reader.fieldnames or []
+                if actual_columns == expected_columns:
+                    for row_number, row in enumerate(reader, start=2):
+                        rows_checked += 1
+                        for column, expected_type in expected_types.items():
+                            value = row.get(column)
+                            if _matches_contract_type(value, expected_type):
+                                continue
+                            invalid_value_count += 1
+                            if len(invalid_values) < max_invalid_values:
+                                invalid_values.append(
+                                    {
+                                        "row_number": row_number,
+                                        "column": column,
+                                        "value": value,
+                                        "expected_type": expected_type,
+                                    }
+                                )
+
+        layer_results[layer_name] = {
+            "success": (
+                artifact_path.is_file()
+                and actual_columns == expected_columns
+                and invalid_value_count == 0
+            ),
+            "path": str(artifact_path),
+            "rows_checked": rows_checked,
+            "invalid_value_count": invalid_value_count,
+            "invalid_values": invalid_values,
+        }
+
+    failed_layers = [
+        layer_name
+        for layer_name, result in layer_results.items()
+        if not result["success"]
+    ]
+    return {
+        "version": 1,
+        "success": not failed_layers,
+        "failed_layers": failed_layers,
+        "max_invalid_values": max_invalid_values,
+        "layers": layer_results,
+    }
+
+
+def raise_for_failed_schema_contract_data_validation(validation):
+    if not validation["success"]:
+        raise ValueError(
+            "Schema contract data validation failed for layers: "
+            f"{', '.join(validation['failed_layers'])}"
+        )
+
+
 def _normalize_arrow_type(arrow_type):
     arrow_type_name = str(arrow_type)
     if arrow_type_name == "double":
@@ -1536,6 +1631,15 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     raise_for_failed_schema_contract_validation(
         manifest["schema_contract_validation"]
+    )
+    manifest["schema_contract_data_validation"] = (
+        build_schema_contract_data_validation(
+            artifact_paths,
+            manifest["schema_contracts"],
+        )
+    )
+    raise_for_failed_schema_contract_data_validation(
+        manifest["schema_contract_data_validation"]
     )
     manifest["partition_contract_validation"] = {
         "silver_orders_by_date_parquet": (
