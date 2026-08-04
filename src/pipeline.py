@@ -609,6 +609,124 @@ def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
     }
 
 
+def _rounded_sum(rows, field):
+    return round(sum(float(row[field]) for row in rows), 2)
+
+
+def _integer_sum(rows, field):
+    return sum(int(row[field]) for row in rows)
+
+
+def _metric_check(name, expected, actual):
+    return {
+        "name": name,
+        "success": expected == actual,
+        "expected": expected,
+        "actual": actual,
+        "difference": round(expected - actual, 2)
+        if isinstance(expected, float) or isinstance(actual, float)
+        else expected - actual,
+    }
+
+
+def build_metric_reconciliation(
+    *,
+    silver_rows,
+    rejected_rows,
+    gold_rows,
+    customer_gold_rows,
+    category_gold_rows,
+    rejection_gold_rows,
+):
+    silver_orders = len(silver_rows)
+    silver_units = _integer_sum(silver_rows, "quantity")
+    silver_revenue = _rounded_sum(silver_rows, "revenue")
+    rejected_orders = len(rejected_rows)
+    rejected_units = _integer_sum(rejected_rows, "quantity")
+    rejected_revenue = round(
+        sum(int(row["quantity"]) * float(row["unit_price"]) for row in rejected_rows),
+        2,
+    )
+
+    checks = [
+        _metric_check(
+            "gold_revenue_orders_match_silver",
+            silver_orders,
+            _integer_sum(gold_rows, "orders"),
+        ),
+        _metric_check(
+            "gold_revenue_units_match_silver",
+            silver_units,
+            _integer_sum(gold_rows, "units"),
+        ),
+        _metric_check(
+            "gold_revenue_amount_match_silver",
+            silver_revenue,
+            _rounded_sum(gold_rows, "revenue"),
+        ),
+        _metric_check(
+            "gold_customer_orders_match_silver",
+            silver_orders,
+            _integer_sum(customer_gold_rows, "orders"),
+        ),
+        _metric_check(
+            "gold_customer_units_match_silver",
+            silver_units,
+            _integer_sum(customer_gold_rows, "units"),
+        ),
+        _metric_check(
+            "gold_customer_revenue_match_silver",
+            silver_revenue,
+            _rounded_sum(customer_gold_rows, "revenue"),
+        ),
+        _metric_check(
+            "gold_category_orders_match_silver",
+            silver_orders,
+            _integer_sum(category_gold_rows, "orders"),
+        ),
+        _metric_check(
+            "gold_category_units_match_silver",
+            silver_units,
+            _integer_sum(category_gold_rows, "units"),
+        ),
+        _metric_check(
+            "gold_category_revenue_match_silver",
+            silver_revenue,
+            _rounded_sum(category_gold_rows, "revenue"),
+        ),
+        _metric_check(
+            "gold_rejection_orders_match_rejected",
+            rejected_orders,
+            _integer_sum(rejection_gold_rows, "rejected_orders"),
+        ),
+        _metric_check(
+            "gold_rejection_units_match_rejected",
+            rejected_units,
+            _integer_sum(rejection_gold_rows, "rejected_units"),
+        ),
+        _metric_check(
+            "gold_rejection_revenue_match_rejected",
+            rejected_revenue,
+            _rounded_sum(rejection_gold_rows, "potential_revenue"),
+        ),
+    ]
+    failed_checks = [check["name"] for check in checks if not check["success"]]
+    return {
+        "version": 1,
+        "success": not failed_checks,
+        "failed_checks": failed_checks,
+        "checks": checks,
+    }
+
+
+def raise_for_failed_metric_reconciliation(reconciliation):
+    if not reconciliation["success"]:
+        raise ValueError(
+            "Metric reconciliation failed: "
+            f"{', '.join(reconciliation['failed_checks'])}"
+        )
+
+
 def load_previous_run_manifest(path):
     path = Path(path)
     if not path.exists():
@@ -1654,6 +1772,15 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     raise_for_failed_partitioned_parquet_contract_validation(
         manifest["partition_contract_validation"]["silver_orders_by_date_parquet"]
     )
+    manifest["metric_reconciliation"] = build_metric_reconciliation(
+        silver_rows=silver_rows,
+        rejected_rows=rejected_rows,
+        gold_rows=gold_rows,
+        customer_gold_rows=customer_gold_rows,
+        category_gold_rows=category_gold_rows,
+        rejection_gold_rows=rejection_gold_rows,
+    )
+    raise_for_failed_metric_reconciliation(manifest["metric_reconciliation"])
     manifest["sql_models"] = build_sql_model_inventory(
         artifact_paths
     )

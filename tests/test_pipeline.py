@@ -8,6 +8,7 @@ import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_metric_reconciliation,
     build_schema_contract_data_validation,
     build_partitioned_parquet_contract_validation,
     build_schema_contract_validation,
@@ -16,6 +17,7 @@ from src.pipeline import (
     cli,
     main,
     parse_args,
+    raise_for_failed_metric_reconciliation,
     raise_for_failed_partitioned_parquet_contract_validation,
     raise_for_failed_schema_contract_data_validation,
     write_partitioned_layer,
@@ -394,6 +396,97 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "revenue",
         ]
     )
+    assert manifest["metric_reconciliation"] == {
+        "version": 1,
+        "success": True,
+        "failed_checks": [],
+        "checks": [
+            {
+                "name": "gold_revenue_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_revenue_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_revenue_amount_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_customer_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_customer_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_customer_revenue_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_category_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_category_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_category_revenue_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_rejection_orders_match_rejected",
+                "success": True,
+                "expected": 1,
+                "actual": 1,
+                "difference": 0,
+            },
+            {
+                "name": "gold_rejection_units_match_rejected",
+                "success": True,
+                "expected": 1,
+                "actual": 1,
+                "difference": 0,
+            },
+            {
+                "name": "gold_rejection_revenue_match_rejected",
+                "success": True,
+                "expected": 800.0,
+                "actual": 800.0,
+                "difference": 0.0,
+            },
+        ],
+    }
     assert manifest["sql_models"] == build_sql_model_inventory(
         {
             "gold_revenue_metrics": processed_dir / "gold_revenue_metrics.csv",
@@ -600,6 +693,102 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "potential_revenue": "800.0",
         }
     ]
+
+
+def test_metric_reconciliation_detects_gold_aggregate_drift():
+    silver_rows = [
+        {
+            "order_id": "1001",
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": 2,
+            "unit_price": 1500.0,
+            "revenue": 3000.0,
+        },
+    ]
+    rejected_rows = [
+        {
+            "order_id": "1002",
+            "customer_id": "C002",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Mouse",
+            "quantity": "1",
+            "unit_price": "800",
+            "status": "cancelled",
+            "rejection_reason": "status_not_included",
+        },
+    ]
+
+    reconciliation = build_metric_reconciliation(
+        silver_rows=silver_rows,
+        rejected_rows=rejected_rows,
+        gold_rows=[
+            {
+                "order_date": "2026-06-01",
+                "category": "Electronics",
+                "orders": 1,
+                "units": 2,
+                "revenue": 2999.0,
+                "average_order_value": 2999.0,
+            }
+        ],
+        customer_gold_rows=[
+            {
+                "customer_id": "C001",
+                "orders": 1,
+                "units": 2,
+                "revenue": 3000.0,
+                "first_order_date": "2026-06-01",
+                "last_order_date": "2026-06-01",
+            }
+        ],
+        category_gold_rows=[
+            {
+                "category": "Electronics",
+                "orders": 1,
+                "customers": 1,
+                "units": 2,
+                "revenue": 3000.0,
+                "average_order_value": 3000.0,
+                "first_order_date": "2026-06-01",
+                "last_order_date": "2026-06-01",
+            }
+        ],
+        rejection_gold_rows=[
+            {
+                "rejection_reason": "status_not_included",
+                "status": "cancelled",
+                "order_date": "2026-06-01",
+                "category": "Electronics",
+                "rejected_orders": 1,
+                "rejected_units": 1,
+                "potential_revenue": 800.0,
+            }
+        ],
+    )
+
+    assert reconciliation["success"] is False
+    assert reconciliation["failed_checks"] == [
+        "gold_revenue_amount_match_silver"
+    ]
+    failed_check = {
+        check["name"]: check for check in reconciliation["checks"]
+    }["gold_revenue_amount_match_silver"]
+    assert failed_check == {
+        "name": "gold_revenue_amount_match_silver",
+        "success": False,
+        "expected": 3000.0,
+        "actual": 2999.0,
+        "difference": 1.0,
+    }
+    with pytest.raises(
+        ValueError,
+        match="Metric reconciliation failed: gold_revenue_amount_match_silver",
+    ):
+        raise_for_failed_metric_reconciliation(reconciliation)
 
 
 def test_pipeline_persists_quality_report_before_failing(tmp_path):

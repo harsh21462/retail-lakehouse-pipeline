@@ -73,8 +73,8 @@ retail-lakehouse-pipeline/
     artifact size and checksum inventory, and a machine-readable
     schema contract, published-artifact schema contract validation, SQL model
     inventory, published CSV data type validation, partitioned Parquet schema
-    validation, lineage graph, and deterministic artifact checksums for each
-    run.
+    validation, gold metric reconciliation, lineage graph, and deterministic
+    artifact checksums for each run.
 11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -189,7 +189,9 @@ Each successful run also writes:
   declared date, integer, and float contracts,
   partitioned Parquet contract validation proving each physical partition file
   still matches the declared silver schema excluding the directory partition
-  column, and per-artifact existence/type/file-count/byte-size/SHA-256 metadata.
+  column, metric reconciliation proving gold order, unit, and revenue totals
+  still tie back to the silver and rejected-order source tables, and
+  per-artifact existence/type/file-count/byte-size/SHA-256 metadata.
   File
   artifacts are hashed directly, while directory artifacts are hashed from
   sorted relative file paths and file contents so partitioned outputs can be
