@@ -454,6 +454,7 @@ def build_silver_profile(rows):
 def build_run_manifest(
     *,
     config_path,
+    config_sha256,
     started_at_utc,
     completed_at_utc,
     duration_ms,
@@ -493,6 +494,7 @@ def build_run_manifest(
         .replace("+00:00", "Z"),
         "run": {
             "config_path": str(config_path),
+            "config_sha256": config_sha256,
             "raw_path": str(raw_path),
             "processed_dir": str(processed_dir),
             "started_at_utc": started_at_utc,
@@ -783,6 +785,8 @@ def build_run_comparison(
 
     previous_source_sha = previous_manifest.get("source", {}).get("sha256")
     current_source_sha = current_manifest.get("source", {}).get("sha256")
+    previous_config_sha = previous_manifest.get("run", {}).get("config_sha256")
+    current_config_sha = current_manifest.get("run", {}).get("config_sha256")
     previous_quality_success = previous_manifest.get("quality", {}).get("success")
     current_quality_success = current_manifest.get("quality", {}).get("success")
     previous_warning_count = previous_manifest.get("health", {}).get("warning_count")
@@ -832,6 +836,7 @@ def build_run_comparison(
             "completed_at_utc"
         ),
         "source_sha256_changed": previous_source_sha != current_source_sha,
+        "config_sha256_changed": previous_config_sha != current_config_sha,
         "quality_success_changed": previous_quality_success != current_quality_success,
         "warning_count": {
             "previous": previous_warning_count,
@@ -1561,6 +1566,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     config_path = Path(config_path)
     config = load_config(config_path)
+    config_sha256 = file_sha256(config_path)
     raw_path = resolve_pipeline_path(config["raw_path"])
     processed_dir = resolve_pipeline_path(config["processed_dir"])
 
@@ -1681,6 +1687,7 @@ def main(config_path=DEFAULT_CONFIG_PATH):
 
     manifest = build_run_manifest(
         config_path=config_path.resolve(),
+        config_sha256=config_sha256,
         started_at_utc=started_at.isoformat().replace("+00:00", "Z"),
         completed_at_utc=completed_at_utc,
         duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),

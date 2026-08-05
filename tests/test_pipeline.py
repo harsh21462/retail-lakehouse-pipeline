@@ -203,6 +203,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     )
     assert manifest["generated_at_utc"].endswith("Z")
     assert manifest["run"]["config_path"] == str(config_path.resolve())
+    assert (
+        manifest["run"]["config_sha256"]
+        == hashlib.sha256(config_path.read_bytes()).hexdigest()
+    )
     assert manifest["run"]["raw_path"] == str(raw_path)
     assert manifest["run"]["processed_dir"] == str(processed_dir)
     assert manifest["run"]["started_at_utc"].endswith("Z")
@@ -1329,6 +1333,7 @@ def test_pipeline_marks_repeated_source_content_from_new_path(tmp_path):
     }
     assert manifest["run_comparison"]["previous_manifest_available"] is True
     assert manifest["run_comparison"]["source_sha256_changed"] is False
+    assert manifest["run_comparison"]["config_sha256_changed"] is True
     assert manifest["run_comparison"]["warning_count"] == {
         "previous": 0,
         "current": 0,

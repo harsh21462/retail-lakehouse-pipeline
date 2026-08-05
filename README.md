@@ -66,8 +66,9 @@ retail-lakehouse-pipeline/
 9. Update an ingestion history keyed by source file checksum so repeated
    source files are visible even when they arrive under a different path.
 10. Write a pipeline manifest with run timing and resolved paths, source
-    checksum, source ingestion classification, config, row counts, quality
-    status, row count reconciliation, source and silver data profiles,
+    checksum, source ingestion classification, config path and checksum,
+    config, row counts, quality status, row count reconciliation, source and
+    silver data profiles,
     rejection reason counts, non-blocking health warnings, run-to-run comparison
     against the previous manifest, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
@@ -173,8 +174,9 @@ Each successful run also writes:
   count, a pass/fail expectation summary, and observed values for every
   expectation.
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
-  source and output paths, elapsed runtime, source file SHA-256, included order
-  statuses, optional order-date window, source ingestion classification
+  source and output paths, elapsed runtime, config file SHA-256, source file
+  SHA-256, included order statuses, optional order-date window, source ingestion
+  classification
   (`new_source_file`, `repeated_source_file`, or `repeated_content_new_path`),
   bronze/silver/gold row counts, source status counts and order date range,
   silver customer/category/revenue profile, bronze-to-silver/rejected row count
@@ -201,8 +203,8 @@ Each successful run also writes:
   versioned lineage graph linking the raw source, quality report,
   ingestion history, bronze layer, silver layer, partitioned silver outputs,
   rejected-order audit table, and executable SQL gold models. When a previous
-  manifest exists, `run_comparison` records layer row-count deltas, source
-  checksum changes, quality status changes, warning-count deltas, and
+  manifest exists, `run_comparison` records layer row-count deltas, source and
+  config checksum changes, quality status changes, warning-count deltas, and
   per-artifact existence/checksum changes; if a prior manifest is missing or
   malformed, the comparison records the reason instead of fabricating deltas.
 - `ingestion_history.json` with every successfully processed source checksum,
