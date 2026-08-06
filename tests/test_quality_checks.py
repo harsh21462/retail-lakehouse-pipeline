@@ -324,7 +324,13 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         },
         "layers": {
             "bronze": {"rows": 10},
-            "rejected": {"rows": 2},
+            "rejected": {
+                "rows": 2,
+                "reasons": {
+                    "outside_configured_date_window": 1,
+                    "status_not_included": 1,
+                },
+            },
             "silver": {"rows": 8},
             "gold": {"rows": 4},
             "gold_customer": {"rows": 3},
@@ -353,7 +359,12 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         },
         "layers": {
             "bronze": {"rows": 12},
-            "rejected": {"rows": 1},
+            "rejected": {
+                "rows": 1,
+                "reasons": {
+                    "outside_configured_date_window": 1,
+                },
+            },
             "silver": {"rows": 11},
             "gold": {"rows": 5},
             "gold_customer": {"rows": 4},
@@ -377,6 +388,18 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "previous": 2,
         "current": 1,
         "delta": -1,
+    }
+    assert comparison["rejection_reason_deltas"] == {
+        "outside_configured_date_window": {
+            "previous": 1,
+            "current": 1,
+            "delta": 0,
+        },
+        "status_not_included": {
+            "previous": 1,
+            "current": None,
+            "delta": None,
+        },
     }
     assert comparison["artifact_checksum_changes"] == {
         "gold_customer_metrics": {
@@ -426,6 +449,21 @@ def test_run_comparison_tolerates_malformed_artifact_inventory():
             "previous_sha256": None,
             "current_sha256": None,
             "sha256_changed": None,
+        }
+    }
+
+
+def test_run_comparison_tolerates_malformed_rejection_reasons():
+    comparison = build_run_comparison(
+        {"layers": {"rejected": {"reasons": {"status_not_included": 2}}}},
+        {"layers": {"rejected": {"reasons": ["not", "an", "object"]}}},
+    )
+
+    assert comparison["rejection_reason_deltas"] == {
+        "status_not_included": {
+            "previous": None,
+            "current": 2,
+            "delta": None,
         }
     }
 

@@ -770,6 +770,12 @@ def build_run_comparison(
     def layer_rows(manifest, layer_name):
         return manifest.get("layers", {}).get(layer_name, {}).get("rows")
 
+    def rejected_reasons(manifest):
+        reasons = manifest.get("layers", {}).get("rejected", {}).get("reasons")
+        if not isinstance(reasons, dict):
+            return {}
+        return reasons
+
     row_count_deltas = {}
     for layer_name in layer_names:
         previous_rows = layer_rows(previous_manifest, layer_name)
@@ -780,6 +786,21 @@ def build_run_comparison(
         row_count_deltas[layer_name] = {
             "previous": previous_rows,
             "current": current_rows,
+            "delta": delta,
+        }
+
+    previous_reasons = rejected_reasons(previous_manifest)
+    current_reasons = rejected_reasons(current_manifest)
+    rejection_reason_deltas = {}
+    for reason in sorted(set(previous_reasons) | set(current_reasons)):
+        previous_count = previous_reasons.get(reason)
+        current_count = current_reasons.get(reason)
+        delta = None
+        if isinstance(previous_count, int) and isinstance(current_count, int):
+            delta = current_count - previous_count
+        rejection_reason_deltas[reason] = {
+            "previous": previous_count,
+            "current": current_count,
             "delta": delta,
         }
 
@@ -844,6 +865,7 @@ def build_run_comparison(
             "delta": warning_count_delta,
         },
         "row_count_deltas": row_count_deltas,
+        "rejection_reason_deltas": rejection_reason_deltas,
         "artifact_checksum_changes": artifact_checksum_changes,
     }
 
