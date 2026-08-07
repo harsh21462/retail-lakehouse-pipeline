@@ -218,6 +218,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "rows": 3,
         "profile": {
             "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
+            "high_watermark": {"order_date": "2026-06-02", "order_id": "1003"},
             "status_counts": {"cancelled": 1, "delivered": 2},
         },
         "ingestion": {
@@ -243,6 +244,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "rows": 2,
             "profile": {
                 "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
+                "high_watermark": {
+                    "order_date": "2026-06-02",
+                    "order_id": "1003",
+                },
                 "customers": 2,
                 "categories": 2,
                 "total_revenue": 8000.0,

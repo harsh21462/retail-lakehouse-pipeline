@@ -7,6 +7,7 @@ from src.pipeline import (
     build_artifact_inventory,
     build_health_warnings,
     build_lineage,
+    build_order_watermark,
     build_run_comparison,
     build_schema_contracts,
     build_sql_model_inventory,
@@ -340,7 +341,15 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
     }
     current_manifest = {
         "run": {"completed_at_utc": "2026-07-30T01:00:00Z"},
-        "source": {"sha256": "current"},
+        "source": {
+            "sha256": "current",
+            "profile": {
+                "high_watermark": {
+                    "order_date": "2026-07-30",
+                    "order_id": "1012",
+                }
+            },
+        },
         "quality": {"success": True},
         "health": {"warning_count": 0},
         "artifact_inventory": {
@@ -379,6 +388,18 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
     assert comparison["source_sha256_changed"] is True
     assert comparison["quality_success_changed"] is False
     assert comparison["warning_count"] == {"previous": 1, "current": 0, "delta": -1}
+    assert comparison["high_watermarks"] == {
+        "source": {
+            "previous": None,
+            "current": {"order_date": "2026-07-30", "order_id": "1012"},
+            "changed": True,
+        },
+        "silver": {
+            "previous": None,
+            "current": None,
+            "changed": False,
+        },
+    }
     assert comparison["row_count_deltas"]["bronze"] == {
         "previous": 10,
         "current": 12,
@@ -605,23 +626,40 @@ def test_manifest_profiles_handle_empty_and_populated_rows():
 
     assert build_source_profile(raw_rows) == {
         "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
+        "high_watermark": {"order_date": "2026-06-02", "order_id": "1001"},
         "status_counts": {"delivered": 1, "returned": 1},
     }
     assert build_silver_profile(silver_rows) == {
         "order_date_range": {"min": "2026-06-02", "max": "2026-06-02"},
+        "high_watermark": {"order_date": "2026-06-02", "order_id": "1001"},
         "customers": 1,
         "categories": 1,
         "total_revenue": 3000.0,
     }
     assert build_source_profile([]) == {
         "order_date_range": {"min": None, "max": None},
+        "high_watermark": {"order_date": None, "order_id": None},
         "status_counts": {},
     }
     assert build_silver_profile([]) == {
         "order_date_range": {"min": None, "max": None},
+        "high_watermark": {"order_date": None, "order_id": None},
         "customers": 0,
         "categories": 0,
         "total_revenue": 0,
+    }
+
+
+def test_order_watermark_uses_latest_date_and_order_id_tiebreaker():
+    rows = [
+        {"order_id": "1003", "order_date": "2026-06-03"},
+        {"order_id": "1001", "order_date": "2026-06-02"},
+        {"order_id": "1004", "order_date": "2026-06-03"},
+    ]
+
+    assert build_order_watermark(rows) == {
+        "order_date": "2026-06-03",
+        "order_id": "1004",
     }
 
 

@@ -68,7 +68,7 @@ retail-lakehouse-pipeline/
 10. Write a pipeline manifest with run timing and resolved paths, source
     checksum, source ingestion classification, config path and checksum,
     config, row counts, quality status, row count reconciliation, source and
-    silver data profiles,
+    silver data profiles with deterministic high-watermarks,
     rejection reason counts, non-blocking health warnings, run-to-run comparison
     against the previous manifest, including rejection-reason deltas, partition
     inventory, output artifact paths,
@@ -179,9 +179,10 @@ Each successful run also writes:
   SHA-256, included order statuses, optional order-date window, source ingestion
   classification
   (`new_source_file`, `repeated_source_file`, or `repeated_content_new_path`),
-  bronze/silver/gold row counts, source status counts and order date range,
-  silver customer/category/revenue profile, bronze-to-silver/rejected row count
-  reconciliation, configured health warning thresholds and any warning
+  bronze/silver/gold row counts, source status counts, source and silver order
+  date ranges, high-watermarks for the latest processed order date and order
+  ID, silver customer/category/revenue profile, bronze-to-silver/rejected row
+  count reconciliation, configured health warning thresholds and any warning
   breaches, silver partition values, per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
   quality summary with failed expectation names, generated artifact paths,
@@ -198,7 +199,9 @@ Each successful run also writes:
   File
   artifacts are hashed directly, while directory artifacts are hashed from
   sorted relative file paths and file contents so partitioned outputs can be
-  compared across runs. The manifest also includes a versioned inventory of
+  compared across runs. The run comparison also records whether source and
+  silver high-watermarks changed since the previous manifest. The manifest also
+  includes a versioned inventory of
   executable SQL gold models with model paths, SHA-256 checksums, input tables,
   output artifacts, and output-column contracts. The manifest also includes a
   versioned lineage graph linking the raw source, quality report,

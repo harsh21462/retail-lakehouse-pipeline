@@ -433,9 +433,26 @@ def _date_range(rows):
     return {"min": dates[0], "max": dates[-1]}
 
 
+def build_order_watermark(rows):
+    if not rows:
+        return {"order_date": None, "order_id": None}
+
+    latest_order_date = max(row["order_date"] for row in rows)
+    latest_order_id = max(
+        row["order_id"]
+        for row in rows
+        if row["order_date"] == latest_order_date
+    )
+    return {
+        "order_date": latest_order_date,
+        "order_id": latest_order_id,
+    }
+
+
 def build_source_profile(rows):
     return {
         "order_date_range": _date_range(rows),
+        "high_watermark": build_order_watermark(rows),
         "status_counts": dict(
             sorted(Counter(row["status"] for row in rows).items())
         ),
@@ -445,6 +462,7 @@ def build_source_profile(rows):
 def build_silver_profile(rows):
     return {
         "order_date_range": _date_range(rows),
+        "high_watermark": build_order_watermark(rows),
         "customers": len({row["customer_id"] for row in rows}),
         "categories": len({row["category"] for row in rows}),
         "total_revenue": round(sum(row["revenue"] for row in rows), 2),
@@ -776,6 +794,25 @@ def build_run_comparison(
             return {}
         return reasons
 
+    def profile_watermark(manifest, layer_name):
+        if layer_name == "source":
+            profile = manifest.get("source", {}).get("profile", {})
+        else:
+            profile = (
+                manifest.get("layers", {})
+                .get(layer_name, {})
+                .get("profile", {})
+            )
+        if not isinstance(profile, dict):
+            return None
+        watermark = profile.get("high_watermark")
+        if not isinstance(watermark, dict):
+            return None
+        return {
+            "order_date": watermark.get("order_date"),
+            "order_id": watermark.get("order_id"),
+        }
+
     row_count_deltas = {}
     for layer_name in layer_names:
         previous_rows = layer_rows(previous_manifest, layer_name)
@@ -863,6 +900,17 @@ def build_run_comparison(
             "previous": previous_warning_count,
             "current": current_warning_count,
             "delta": warning_count_delta,
+        },
+        "high_watermarks": {
+            layer_name: {
+                "previous": profile_watermark(previous_manifest, layer_name),
+                "current": profile_watermark(current_manifest, layer_name),
+                "changed": (
+                    profile_watermark(previous_manifest, layer_name)
+                    != profile_watermark(current_manifest, layer_name)
+                ),
+            }
+            for layer_name in ["source", "silver"]
         },
         "row_count_deltas": row_count_deltas,
         "rejection_reason_deltas": rejection_reason_deltas,
