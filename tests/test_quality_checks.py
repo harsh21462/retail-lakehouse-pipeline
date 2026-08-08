@@ -310,7 +310,12 @@ def test_row_count_reconciliation_fails_on_unaccounted_rows():
 def test_run_comparison_reports_layer_deltas_and_status_changes():
     previous_manifest = {
         "run": {"completed_at_utc": "2026-07-29T01:00:00Z"},
-        "source": {"sha256": "previous"},
+        "source": {
+            "sha256": "previous",
+            "profile": {
+                "status_counts": {"cancelled": 2, "delivered": 8},
+            },
+        },
         "quality": {"success": True},
         "health": {"warning_count": 1},
         "artifact_inventory": {
@@ -347,7 +352,8 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "high_watermark": {
                     "order_date": "2026-07-30",
                     "order_id": "1012",
-                }
+                },
+                "status_counts": {"delivered": 10, "returned": 2},
             },
         },
         "quality": {"success": True},
@@ -409,6 +415,23 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "previous": 2,
         "current": 1,
         "delta": -1,
+    }
+    assert comparison["source_status_count_deltas"] == {
+        "cancelled": {
+            "previous": 2,
+            "current": None,
+            "delta": None,
+        },
+        "delivered": {
+            "previous": 8,
+            "current": 10,
+            "delta": 2,
+        },
+        "returned": {
+            "previous": None,
+            "current": 2,
+            "delta": None,
+        },
     }
     assert comparison["rejection_reason_deltas"] == {
         "outside_configured_date_window": {
@@ -484,6 +507,21 @@ def test_run_comparison_tolerates_malformed_rejection_reasons():
         "status_not_included": {
             "previous": None,
             "current": 2,
+            "delta": None,
+        }
+    }
+
+
+def test_run_comparison_tolerates_malformed_source_status_counts():
+    comparison = build_run_comparison(
+        {"source": {"profile": {"status_counts": {"delivered": 3}}}},
+        {"source": {"profile": {"status_counts": ["not", "an", "object"]}}},
+    )
+
+    assert comparison["source_status_count_deltas"] == {
+        "delivered": {
+            "previous": None,
+            "current": 3,
             "delta": None,
         }
     }

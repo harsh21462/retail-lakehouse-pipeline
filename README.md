@@ -70,8 +70,8 @@ retail-lakehouse-pipeline/
     config, row counts, quality status, row count reconciliation, source and
     silver data profiles with deterministic high-watermarks,
     rejection reason counts, non-blocking health warnings, run-to-run comparison
-    against the previous manifest, including rejection-reason deltas, partition
-    inventory, output artifact paths,
+    against the previous manifest, including source status-count and
+    rejection-reason deltas, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
     schema contract, published-artifact schema contract validation, SQL model
     inventory, published CSV data type validation, partitioned Parquet schema
@@ -200,16 +200,18 @@ Each successful run also writes:
   artifacts are hashed directly, while directory artifacts are hashed from
   sorted relative file paths and file contents so partitioned outputs can be
   compared across runs. The run comparison also records whether source and
-  silver high-watermarks changed since the previous manifest. The manifest also
-  includes a versioned inventory of
+  silver high-watermarks changed since the previous manifest, plus raw source
+  status-count deltas so changes in order status mix are visible before they
+  flow into rejection metrics. The manifest also includes a versioned inventory of
   executable SQL gold models with model paths, SHA-256 checksums, input tables,
   output artifacts, and output-column contracts. The manifest also includes a
   versioned lineage graph linking the raw source, quality report,
   ingestion history, bronze layer, silver layer, partitioned silver outputs,
   rejected-order audit table, and executable SQL gold models. When a previous
   manifest exists, `run_comparison` records layer row-count deltas, source and
-  config checksum changes, quality status changes, warning-count deltas,
-  rejection-reason count deltas, and per-artifact existence/checksum changes;
+  config checksum changes, quality status changes, warning-count deltas, source
+  status-count deltas, rejection-reason count deltas, and per-artifact
+  existence/checksum changes;
   if a prior manifest is missing or malformed, the comparison records the
   reason instead of fabricating deltas.
 - `ingestion_history.json` with every successfully processed source checksum,

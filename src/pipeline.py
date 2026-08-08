@@ -794,6 +794,16 @@ def build_run_comparison(
             return {}
         return reasons
 
+    def source_status_counts(manifest):
+        counts = (
+            manifest.get("source", {})
+            .get("profile", {})
+            .get("status_counts")
+        )
+        if not isinstance(counts, dict):
+            return {}
+        return counts
+
     def profile_watermark(manifest, layer_name):
         if layer_name == "source":
             profile = manifest.get("source", {}).get("profile", {})
@@ -836,6 +846,21 @@ def build_run_comparison(
         if isinstance(previous_count, int) and isinstance(current_count, int):
             delta = current_count - previous_count
         rejection_reason_deltas[reason] = {
+            "previous": previous_count,
+            "current": current_count,
+            "delta": delta,
+        }
+
+    previous_status_counts = source_status_counts(previous_manifest)
+    current_status_counts = source_status_counts(current_manifest)
+    status_count_deltas = {}
+    for status in sorted(set(previous_status_counts) | set(current_status_counts)):
+        previous_count = previous_status_counts.get(status)
+        current_count = current_status_counts.get(status)
+        delta = None
+        if isinstance(previous_count, int) and isinstance(current_count, int):
+            delta = current_count - previous_count
+        status_count_deltas[status] = {
             "previous": previous_count,
             "current": current_count,
             "delta": delta,
@@ -913,6 +938,7 @@ def build_run_comparison(
             for layer_name in ["source", "silver"]
         },
         "row_count_deltas": row_count_deltas,
+        "source_status_count_deltas": status_count_deltas,
         "rejection_reason_deltas": rejection_reason_deltas,
         "artifact_checksum_changes": artifact_checksum_changes,
     }
