@@ -9,6 +9,7 @@ import pytest
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
     build_metric_reconciliation,
+    build_run_summary_markdown,
     build_schema_contract_data_validation,
     build_partitioned_parquet_contract_validation,
     build_schema_contract_validation,
@@ -24,6 +25,7 @@ from src.pipeline import (
     write_partitioned_parquet_layer,
     write_csv,
     write_json,
+    write_text,
 )
 
 
@@ -80,6 +82,40 @@ def test_json_writer_preserves_existing_artifact_when_serialization_fails(tmp_pa
 
     assert output_path.read_text(encoding="utf-8") == '{"status": "previous"}\n'
     assert list(tmp_path.glob(".pipeline_manifest.json.*.tmp")) == []
+
+
+def test_text_writer_preserves_existing_artifact_when_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    output_path = tmp_path / "pipeline_run_summary.md"
+    output_path.write_text("previous summary\n", encoding="utf-8")
+
+    class FailingTempFile:
+        name = str(tmp_path / ".pipeline_run_summary.md.fake.tmp")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def write(self, value):
+            raise OSError("simulated summary failure")
+
+    def failing_named_temporary_file(*args, **kwargs):
+        return FailingTempFile()
+
+    monkeypatch.setattr(
+        "src.pipeline.tempfile.NamedTemporaryFile",
+        failing_named_temporary_file,
+    )
+
+    with pytest.raises(OSError, match="simulated summary failure"):
+        write_text(output_path, "new summary\n")
+
+    assert output_path.read_text(encoding="utf-8") == "previous summary\n"
+    assert list(tmp_path.glob(".pipeline_run_summary.md.*.tmp")) == []
 
 
 def test_partitioned_csv_writer_preserves_existing_directory_when_write_fails(
@@ -322,6 +358,13 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "previous_manifest_available": False,
         "unavailable_reason": "not_found",
     }
+    run_summary = (processed_dir / "pipeline_run_summary.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Pipeline Run Summary" in run_summary
+    assert f"- Source: `{raw_path}`" in run_summary
+    assert "- Quality: passed" in run_summary
+    assert "| silver | 2 | n/a |" in run_summary
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
         "rejected_orders": str(processed_dir / "rejected_orders.csv"),
@@ -1359,3 +1402,59 @@ def test_pipeline_marks_repeated_source_content_from_new_path(tmp_path):
     )
     assert history["sources"][0]["run_count"] == 2
     assert history["sources"][0]["paths"] == [str(second_raw_path), str(first_raw_path)]
+
+
+def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
+    summary = build_run_summary_markdown(
+        {
+            "run": {"completed_at_utc": "2026-07-30T01:00:00Z"},
+            "source": {
+                "path": "/data/raw/orders.csv",
+                "ingestion": {"classification": "new_source_file"},
+            },
+            "quality": {
+                "success": False,
+                "summary": {
+                    "failed_expectations": ["amounts_are_positive_numbers"],
+                },
+            },
+            "health": {
+                "warning_count": 1,
+                "warnings": [
+                    {
+                        "name": "silver_rows_below_threshold",
+                        "message": "Silver row count fell below threshold",
+                    }
+                ],
+            },
+            "config": {
+                "included_statuses": ["delivered"],
+                "order_date_window": {
+                    "start": "2026-06-01",
+                    "end": "2026-06-30",
+                },
+            },
+            "layers": {
+                "bronze": {"rows": 10},
+                "silver": {"rows": 8},
+            },
+            "run_comparison": {
+                "config_sha256_changed": False,
+                "row_count_deltas": {
+                    "bronze": {"delta": 2},
+                    "silver": {"delta": -1},
+                },
+                "artifact_checksum_changes": {
+                    "silver_orders": {"sha256_changed": True},
+                    "gold_revenue_metrics": {"sha256_changed": False},
+                },
+            },
+        }
+    )
+
+    assert "- Quality: failed" in summary
+    assert "| bronze | 10 | +2 |" in summary
+    assert "| silver | 8 | -1 |" in summary
+    assert "- `amounts_are_positive_numbers`" in summary
+    assert "- `silver_rows_below_threshold`: Silver row count fell below threshold" in summary
+    assert "- `silver_orders`" in summary

@@ -77,7 +77,10 @@ retail-lakehouse-pipeline/
     inventory, published CSV data type validation, partitioned Parquet schema
     validation, gold metric reconciliation, lineage graph, and deterministic
     artifact checksums for each run.
-11. Optionally schedule the same CLI entrypoint through the checked-in Airflow
+11. Write a Markdown run summary derived from the manifest for quick
+    operational review of source ingestion status, quality, warning counts,
+    row-count deltas, and changed artifacts.
+12. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
@@ -214,6 +217,9 @@ Each successful run also writes:
   existence/checksum changes;
   if a prior manifest is missing or malformed, the comparison records the
   reason instead of fabricating deltas.
+- `pipeline_run_summary.md` with a concise human-readable handoff of source
+  ingestion classification, quality status, health warnings, current row
+  counts, run-to-run deltas, and changed artifacts from the manifest.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps

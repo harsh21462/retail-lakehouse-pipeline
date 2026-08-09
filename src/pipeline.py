@@ -342,6 +342,27 @@ def write_json(path, value):
         raise
 
 
+def write_text(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as file:
+            temp_path = Path(file.name)
+            file.write(value)
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
 def file_sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as file:
@@ -1238,6 +1259,117 @@ def build_artifact_inventory(artifacts):
     return inventory
 
 
+def _format_summary_value(value):
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _format_delta(delta):
+    if delta is None:
+        return "n/a"
+    if isinstance(delta, (int, float)) and delta > 0:
+        return f"+{delta}"
+    return str(delta)
+
+
+def build_run_summary_markdown(manifest):
+    run = manifest.get("run", {})
+    source = manifest.get("source", {})
+    quality = manifest.get("quality", {})
+    health = manifest.get("health", {})
+    config = manifest.get("config", {})
+    layers = manifest.get("layers", {})
+    comparison = manifest.get("run_comparison", {})
+
+    lines = [
+        "# Pipeline Run Summary",
+        "",
+        f"- Completed: {_format_summary_value(run.get('completed_at_utc'))}",
+        f"- Source: `{_format_summary_value(source.get('path'))}`",
+        f"- Source ingestion: "
+        f"`{_format_summary_value(source.get('ingestion', {}).get('classification'))}`",
+        f"- Quality: {'passed' if quality.get('success') else 'failed'}",
+        f"- Health warnings: {health.get('warning_count', 0)}",
+        f"- Config checksum changed: "
+        f"{_format_summary_value(comparison.get('config_sha256_changed'))}",
+        "",
+        "## Config",
+        "",
+        f"- Included statuses: "
+        f"{', '.join(config.get('included_statuses', [])) or 'n/a'}",
+        f"- Order date window: "
+        f"{_format_summary_value(config.get('order_date_window', {}).get('start'))} "
+        f"to {_format_summary_value(config.get('order_date_window', {}).get('end'))}",
+        "",
+        "## Row Counts",
+        "",
+        "| Layer | Current rows | Delta |",
+        "| --- | ---: | ---: |",
+    ]
+
+    row_count_deltas = comparison.get("row_count_deltas", {})
+    for layer_name in [
+        "bronze",
+        "rejected",
+        "silver",
+        "gold",
+        "gold_customer",
+        "gold_category",
+        "gold_rejection",
+    ]:
+        current_rows = layers.get(layer_name, {}).get("rows")
+        delta = row_count_deltas.get(layer_name, {}).get("delta")
+        lines.append(
+            f"| {layer_name} | {_format_summary_value(current_rows)} | "
+            f"{_format_delta(delta)} |"
+        )
+
+    failed_expectations = quality.get("summary", {}).get("failed_expectations", [])
+    if failed_expectations:
+        lines.extend(
+            [
+                "",
+                "## Failed Quality Expectations",
+                "",
+                *[f"- `{expectation}`" for expectation in failed_expectations],
+            ]
+        )
+
+    warnings = health.get("warnings", [])
+    if warnings:
+        lines.extend(
+            [
+                "",
+                "## Health Warnings",
+                "",
+                *[
+                    f"- `{warning.get('name')}`: {warning.get('message')}"
+                    for warning in warnings
+                ],
+            ]
+        )
+
+    artifact_changes = comparison.get("artifact_checksum_changes", {})
+    changed_artifacts = [
+        artifact_name
+        for artifact_name, change in sorted(artifact_changes.items())
+        if isinstance(change, dict) and change.get("sha256_changed") is True
+    ]
+    if changed_artifacts:
+        lines.extend(
+            [
+                "",
+                "## Changed Artifacts",
+                "",
+                *[f"- `{artifact_name}`" for artifact_name in changed_artifacts],
+            ]
+        )
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_schema_contracts():
     def contract(fields):
         return {
@@ -1898,6 +2030,9 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     )
     write_json(manifest_path, manifest)
     LOGGER.info("Wrote pipeline manifest to %s", manifest_path)
+    summary_path = processed_dir / "pipeline_run_summary.md"
+    write_text(summary_path, build_run_summary_markdown(manifest))
+    LOGGER.info("Wrote pipeline run summary to %s", summary_path)
 
     LOGGER.info(
         "Pipeline completed: %s raw, %s rejected, %s silver, %s revenue gold, "
