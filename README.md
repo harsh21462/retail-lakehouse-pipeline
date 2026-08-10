@@ -139,7 +139,9 @@ the full pytest suite in GitHub Actions. The integration test uses isolated
 temporary input and verifies the generated bronze, silver, and gold datasets.
 If a data quality expectation fails, the pipeline writes
 `data_quality_report.json` before stopping so the failed run still has a
-diagnostic artifact.
+diagnostic artifact. The report includes bounded row-level failure samples
+with the affected expectations and raw source values, capped at 10 rows so a
+bad batch does not create an unbounded diagnostic artifact.
 
 The gold layers are defined in `sql/gold_revenue_metrics.sql`,
 `sql/gold_customer_metrics.sql`, `sql/gold_category_metrics.sql`, and
@@ -176,7 +178,7 @@ Each successful run also writes:
 
 - `data_quality_report.json` with the overall validation status, source row
   count, a pass/fail expectation summary, and observed values for every
-  expectation.
+  expectation, plus bounded failed-row samples for quick triage.
 - `pipeline_manifest.json` with the UTC run timestamp, config path, resolved
   source and output paths, elapsed runtime, config file SHA-256, source file
   SHA-256, included order statuses, optional order-date window, source ingestion

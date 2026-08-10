@@ -12,6 +12,7 @@ REQUIRED_COLUMNS = [
     "unit_price",
     "status",
 ]
+MAX_FAILED_ROW_SAMPLES = 10
 
 
 def _expectation(name, success, observed):
@@ -44,6 +45,72 @@ def _row_identifier(row, index):
     if _is_blank(order_id):
         return f"row_{index}"
     return order_id
+
+
+def _build_failed_row_samples(
+    rows,
+    *,
+    duplicate_ids,
+    missing_columns,
+    max_samples=MAX_FAILED_ROW_SAMPLES,
+):
+    if missing_columns:
+        return {
+            "max_samples": max_samples,
+            "sample_count": 0,
+            "omitted_count": 0,
+            "rows": [],
+        }
+
+    samples = []
+    for index, row in enumerate(rows, start=1):
+        issues = []
+        row_id = _row_identifier(row, index)
+
+        if None in row or any(row.get(column) is None for column in REQUIRED_COLUMNS):
+            issues.append("rows_are_well_formed")
+        if _is_blank(row.get("order_id")):
+            issues.append("order_ids_are_populated")
+        if row.get("order_id") in duplicate_ids:
+            issues.append("order_id_is_unique")
+
+        try:
+            amount_is_valid = (
+                int(row["quantity"]) > 0 and float(row["unit_price"]) > 0
+            )
+        except (KeyError, TypeError, ValueError):
+            amount_is_valid = False
+        if not amount_is_valid:
+            issues.append("amounts_are_positive_numbers")
+
+        if not _is_iso_date(row.get("order_date")):
+            issues.append("order_dates_are_iso_dates")
+
+        dimension_columns = ["customer_id", "category", "product", "status"]
+        if any(_is_blank(row.get(column)) for column in dimension_columns):
+            issues.append("business_dimensions_are_populated")
+
+        if not issues:
+            continue
+
+        samples.append(
+            {
+                "row_number": index,
+                "order_id": row_id,
+                "issues": issues,
+                "values": {
+                    column: row.get(column)
+                    for column in REQUIRED_COLUMNS
+                },
+            }
+        )
+
+    return {
+        "max_samples": max_samples,
+        "sample_count": min(len(samples), max_samples),
+        "omitted_count": max(len(samples) - max_samples, 0),
+        "rows": samples[:max_samples],
+    }
 
 
 def evaluate_quality(
@@ -211,6 +278,11 @@ def evaluate_quality(
     return {
         "success": not failed_expectations,
         "row_count": len(rows),
+        "failed_row_samples": _build_failed_row_samples(
+            rows,
+            duplicate_ids=duplicate_ids,
+            missing_columns=missing_columns,
+        ),
         "summary": {
             "expectations": len(expectations),
             "passed": len(expectations) - len(failed_expectations),

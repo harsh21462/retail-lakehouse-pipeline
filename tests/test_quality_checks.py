@@ -1120,6 +1120,73 @@ def test_quality_report_identifies_all_failed_expectations():
     assert results["amounts_are_positive_numbers"]["observed"] == {
         "invalid_order_ids": ["1001"]
     }
+    assert report["failed_row_samples"] == {
+        "max_samples": 10,
+        "sample_count": 2,
+        "omitted_count": 0,
+        "rows": [
+            {
+                "row_number": 1,
+                "order_id": "1001",
+                "issues": [
+                    "order_id_is_unique",
+                    "amounts_are_positive_numbers",
+                ],
+                "values": {
+                    "order_id": "1001",
+                    "customer_id": "C001",
+                    "order_date": "2026-06-01",
+                    "category": "Electronics",
+                    "product": "Keyboard",
+                    "quantity": "not-a-number",
+                    "unit_price": "1500",
+                    "status": "delivered",
+                },
+            },
+            {
+                "row_number": 2,
+                "order_id": "1001",
+                "issues": ["order_id_is_unique"],
+                "values": {
+                    "order_id": "1001",
+                    "customer_id": "C002",
+                    "order_date": "2026-06-01",
+                    "category": "Electronics",
+                    "product": "Mouse",
+                    "quantity": "1",
+                    "unit_price": "800",
+                    "status": "delivered",
+                },
+            },
+        ],
+    }
+
+
+def test_quality_report_bounds_failed_row_samples():
+    rows = [
+        {
+            "order_id": str(1000 + index),
+            "customer_id": "C001",
+            "order_date": "2026-06-01",
+            "category": "Electronics",
+            "product": "Keyboard",
+            "quantity": "0",
+            "unit_price": "1500",
+            "status": "delivered",
+        }
+        for index in range(12)
+    ]
+
+    report = evaluate_quality(rows)
+
+    assert report["failed_row_samples"]["max_samples"] == 10
+    assert report["failed_row_samples"]["sample_count"] == 10
+    assert report["failed_row_samples"]["omitted_count"] == 2
+    sample_row_numbers = [
+        sample["row_number"]
+        for sample in report["failed_row_samples"]["rows"]
+    ]
+    assert sample_row_numbers == list(range(1, 11))
 
 
 def test_quality_report_rejects_blank_order_ids():
