@@ -344,6 +344,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "failed": 0,
             "failed_expectations": [],
         },
+        "expectations": quality_report["expectations"],
     }
     assert manifest["reconciliation"] == {
         "success": True,
@@ -364,6 +365,8 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert "# Pipeline Run Summary" in run_summary
     assert f"- Source: `{raw_path}`" in run_summary
     assert "- Quality: passed" in run_summary
+    assert "## Quality Expectations" in run_summary
+    assert "| `dataset_is_not_empty` | passed | row_count=3 |" in run_summary
     assert "| silver | 2 | n/a |" in run_summary
     assert manifest["artifacts"] == {
         "bronze_orders": str(processed_dir / "bronze_orders.csv"),
@@ -950,6 +953,9 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
     manifest = json.loads(
         (processed_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
     )
+    quality_report = json.loads(
+        (processed_dir / "data_quality_report.json").read_text(encoding="utf-8")
+    )
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": "2026-06-02", "end": "2026-06-02"},
@@ -967,6 +973,7 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
             "failed": 0,
             "failed_expectations": [],
         },
+        "expectations": quality_report["expectations"],
     }
 
 
@@ -1417,6 +1424,18 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                 "summary": {
                     "failed_expectations": ["amounts_are_positive_numbers"],
                 },
+                "expectations": [
+                    {
+                        "expectation": "dataset_is_not_empty",
+                        "success": True,
+                        "observed": {"row_count": 10},
+                    },
+                    {
+                        "expectation": "amounts_are_positive_numbers",
+                        "success": False,
+                        "observed": {"invalid_order_ids": ["1002"]},
+                    },
+                ],
             },
             "health": {
                 "warning_count": 1,
@@ -1453,6 +1472,11 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     )
 
     assert "- Quality: failed" in summary
+    assert "| `dataset_is_not_empty` | passed | row_count=10 |" in summary
+    assert (
+        "| `amounts_are_positive_numbers` | failed | "
+        "invalid_order_ids=['1002'] |"
+    ) in summary
     assert "| bronze | 10 | +2 |" in summary
     assert "| silver | 8 | -1 |" in summary
     assert "- `amounts_are_positive_numbers`" in summary

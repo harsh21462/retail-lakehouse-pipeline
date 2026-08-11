@@ -583,6 +583,7 @@ def build_run_manifest(
         "quality": {
             "success": quality_report["success"],
             "summary": quality_report["summary"],
+            "expectations": quality_report["expectations"],
         },
         "reconciliation": build_row_count_reconciliation(
             bronze_rows,
@@ -1273,6 +1274,28 @@ def _format_delta(delta):
     return str(delta)
 
 
+def _format_quality_expectation_rows(expectations):
+    rows = []
+    for expectation in expectations:
+        name = expectation.get("expectation")
+        if not name:
+            continue
+        status = "passed" if expectation.get("success") else "failed"
+        observed = expectation.get("observed", {})
+        if isinstance(observed, dict):
+            observed_summary = ", ".join(
+                f"{key}={_format_summary_value(value)}"
+                for key, value in sorted(observed.items())
+                if value not in (None, [], {})
+            )
+        else:
+            observed_summary = _format_summary_value(observed)
+        rows.append(
+            f"| `{name}` | {status} | {observed_summary or 'n/a'} |"
+        )
+    return rows
+
+
 def build_run_summary_markdown(manifest):
     run = manifest.get("run", {})
     source = manifest.get("source", {})
@@ -1326,6 +1349,21 @@ def build_run_summary_markdown(manifest):
         )
 
     failed_expectations = quality.get("summary", {}).get("failed_expectations", [])
+    expectation_rows = _format_quality_expectation_rows(
+        quality.get("expectations", [])
+    )
+    if expectation_rows:
+        lines.extend(
+            [
+                "",
+                "## Quality Expectations",
+                "",
+                "| Expectation | Status | Observed |",
+                "| --- | --- | --- |",
+                *expectation_rows,
+            ]
+        )
+
     if failed_expectations:
         lines.extend(
             [
