@@ -590,6 +590,10 @@ def build_run_manifest(
             silver_rows,
             rejected_rows,
         ),
+        "business_impact": build_business_impact_summary(
+            silver_rows,
+            rejected_rows,
+        ),
         "artifacts": {name: str(path) for name, path in artifacts.items()},
     }
 
@@ -648,6 +652,58 @@ def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
         "rejected_rows": rejected_count,
         "accounted_rows": accounted_count,
         "difference": bronze_count - accounted_count,
+    }
+
+
+def build_business_impact_summary(silver_rows, rejected_rows):
+    accepted_orders = len(silver_rows)
+    rejected_orders = len(rejected_rows)
+    total_source_orders = accepted_orders + rejected_orders
+    accepted_units = _integer_sum(silver_rows, "quantity")
+    accepted_revenue = _rounded_sum(silver_rows, "revenue")
+    rejected_units = _integer_sum(rejected_rows, "quantity")
+    rejected_revenue = round(
+        sum(int(row["quantity"]) * float(row["unit_price"]) for row in rejected_rows),
+        2,
+    )
+    total_potential_revenue = round(accepted_revenue + rejected_revenue, 2)
+
+    return {
+        "version": 1,
+        "orders": {
+            "source": total_source_orders,
+            "accepted": accepted_orders,
+            "rejected": rejected_orders,
+            "rejection_rate": (
+                round(rejected_orders / total_source_orders, 6)
+                if total_source_orders
+                else 0
+            ),
+        },
+        "units": {
+            "accepted": accepted_units,
+            "rejected": rejected_units,
+        },
+        "revenue": {
+            "accepted": accepted_revenue,
+            "rejected_potential": rejected_revenue,
+            "total_potential": total_potential_revenue,
+            "realized_rate": (
+                round(accepted_revenue / total_potential_revenue, 6)
+                if total_potential_revenue
+                else 0
+            ),
+            "accepted_average_order_value": (
+                round(accepted_revenue / accepted_orders, 2)
+                if accepted_orders
+                else 0
+            ),
+            "rejected_average_order_value": (
+                round(rejected_revenue / rejected_orders, 2)
+                if rejected_orders
+                else 0
+            ),
+        },
     }
 
 
@@ -1304,6 +1360,7 @@ def build_run_summary_markdown(manifest):
     config = manifest.get("config", {})
     layers = manifest.get("layers", {})
     comparison = manifest.get("run_comparison", {})
+    business_impact = manifest.get("business_impact", {})
 
     lines = [
         "# Pipeline Run Summary",
@@ -1346,6 +1403,31 @@ def build_run_summary_markdown(manifest):
         lines.append(
             f"| {layer_name} | {_format_summary_value(current_rows)} | "
             f"{_format_delta(delta)} |"
+        )
+
+    if business_impact:
+        orders = business_impact.get("orders", {})
+        revenue = business_impact.get("revenue", {})
+        lines.extend(
+            [
+                "",
+                "## Business Impact",
+                "",
+                "| Metric | Value |",
+                "| --- | ---: |",
+                f"| Accepted orders | "
+                f"{_format_summary_value(orders.get('accepted'))} |",
+                f"| Rejected orders | "
+                f"{_format_summary_value(orders.get('rejected'))} |",
+                f"| Rejection rate | "
+                f"{_format_summary_value(orders.get('rejection_rate'))} |",
+                f"| Accepted revenue | "
+                f"{_format_summary_value(revenue.get('accepted'))} |",
+                f"| Rejected potential revenue | "
+                f"{_format_summary_value(revenue.get('rejected_potential'))} |",
+                f"| Realized revenue rate | "
+                f"{_format_summary_value(revenue.get('realized_rate'))} |",
+            ]
         )
 
     failed_expectations = quality.get("summary", {}).get("failed_expectations", [])

@@ -8,6 +8,7 @@ import pytest
 
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
+    build_business_impact_summary,
     build_metric_reconciliation,
     build_run_summary_markdown,
     build_schema_contract_data_validation,
@@ -354,6 +355,27 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "accounted_rows": 3,
         "difference": 0,
     }
+    assert manifest["business_impact"] == {
+        "version": 1,
+        "orders": {
+            "source": 3,
+            "accepted": 2,
+            "rejected": 1,
+            "rejection_rate": 0.333333,
+        },
+        "units": {
+            "accepted": 4,
+            "rejected": 1,
+        },
+        "revenue": {
+            "accepted": 8000.0,
+            "rejected_potential": 800.0,
+            "total_potential": 8800.0,
+            "realized_rate": 0.909091,
+            "accepted_average_order_value": 4000.0,
+            "rejected_average_order_value": 800.0,
+        },
+    }
     assert manifest["run_comparison"] == {
         "version": 1,
         "previous_manifest_available": False,
@@ -366,6 +388,8 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert f"- Source: `{raw_path}`" in run_summary
     assert "- Quality: passed" in run_summary
     assert "## Quality Expectations" in run_summary
+    assert "## Business Impact" in run_summary
+    assert "| Rejected potential revenue | 800.0 |" in run_summary
     assert "| `dataset_is_not_empty` | passed | row_count=3 |" in run_summary
     assert "| silver | 2 | n/a |" in run_summary
     assert manifest["artifacts"] == {
@@ -844,6 +868,79 @@ def test_metric_reconciliation_detects_gold_aggregate_drift():
         match="Metric reconciliation failed: gold_revenue_amount_match_silver",
     ):
         raise_for_failed_metric_reconciliation(reconciliation)
+
+
+def test_business_impact_summary_reports_revenue_exposure():
+    summary = build_business_impact_summary(
+        silver_rows=[
+            {
+                "order_id": "1001",
+                "quantity": 2,
+                "unit_price": 1500.0,
+                "revenue": 3000.0,
+            },
+            {
+                "order_id": "1002",
+                "quantity": 1,
+                "unit_price": 2500.0,
+                "revenue": 2500.0,
+            },
+        ],
+        rejected_rows=[
+            {
+                "order_id": "1003",
+                "quantity": "1",
+                "unit_price": "800",
+                "rejection_reason": "status_not_included",
+            }
+        ],
+    )
+
+    assert summary == {
+        "version": 1,
+        "orders": {
+            "source": 3,
+            "accepted": 2,
+            "rejected": 1,
+            "rejection_rate": 0.333333,
+        },
+        "units": {
+            "accepted": 3,
+            "rejected": 1,
+        },
+        "revenue": {
+            "accepted": 5500.0,
+            "rejected_potential": 800.0,
+            "total_potential": 6300.0,
+            "realized_rate": 0.873016,
+            "accepted_average_order_value": 2750.0,
+            "rejected_average_order_value": 800.0,
+        },
+    }
+
+
+def test_business_impact_summary_handles_empty_inputs():
+    assert build_business_impact_summary([], []) == {
+        "version": 1,
+        "orders": {
+            "source": 0,
+            "accepted": 0,
+            "rejected": 0,
+            "rejection_rate": 0,
+        },
+        "units": {
+            "accepted": 0,
+            "rejected": 0,
+        },
+        "revenue": {
+            "accepted": 0,
+            "rejected_potential": 0,
+            "total_potential": 0,
+            "realized_rate": 0,
+            "accepted_average_order_value": 0,
+            "rejected_average_order_value": 0,
+        },
+    }
 
 
 def test_pipeline_persists_quality_report_before_failing(tmp_path):
@@ -1457,6 +1554,18 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                 "bronze": {"rows": 10},
                 "silver": {"rows": 8},
             },
+            "business_impact": {
+                "orders": {
+                    "accepted": 8,
+                    "rejected": 2,
+                    "rejection_rate": 0.2,
+                },
+                "revenue": {
+                    "accepted": 1200.0,
+                    "rejected_potential": 300.0,
+                    "realized_rate": 0.8,
+                },
+            },
             "run_comparison": {
                 "config_sha256_changed": False,
                 "row_count_deltas": {
@@ -1479,6 +1588,9 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     ) in summary
     assert "| bronze | 10 | +2 |" in summary
     assert "| silver | 8 | -1 |" in summary
+    assert "## Business Impact" in summary
+    assert "| Rejection rate | 0.2 |" in summary
+    assert "| Realized revenue rate | 0.8 |" in summary
     assert "- `amounts_are_positive_numbers`" in summary
     assert "- `silver_rows_below_threshold`: Silver row count fell below threshold" in summary
     assert "- `silver_orders`" in summary

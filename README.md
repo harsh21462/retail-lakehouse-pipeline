@@ -69,7 +69,8 @@ retail-lakehouse-pipeline/
     checksum, source ingestion classification, config path and checksum,
     config, row counts, quality status, row count reconciliation, source and
     silver data profiles with deterministic high-watermarks,
-    rejection reason counts, non-blocking health warnings, run-to-run comparison
+    rejection reason counts, accepted and rejected business-impact metrics,
+    non-blocking health warnings, run-to-run comparison
     against the previous manifest, including source status-count and
     rejection-reason deltas, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
@@ -79,7 +80,8 @@ retail-lakehouse-pipeline/
     artifact checksums for each run.
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
-    pass/fail details, warning counts, row-count deltas, and changed artifacts.
+    pass/fail details, warning counts, row-count deltas, accepted versus
+    rejected revenue exposure, and changed artifacts.
 12. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
@@ -187,8 +189,10 @@ Each successful run also writes:
   bronze/silver/gold row counts, source status counts, source and silver order
   date ranges, high-watermarks for the latest processed order date and order
   ID, silver customer/category/revenue profile, bronze-to-silver/rejected row
-  count reconciliation, configured health warning thresholds and any warning
-  breaches, silver partition values, per-partition row counts and file paths,
+  count reconciliation, accepted and rejected order, unit, revenue, rejection
+  rate, realized revenue rate, and average order value metrics, configured
+  health warning thresholds and any warning breaches, silver partition values,
+  per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
   quality summary with failed expectation names, generated artifact paths,
   schema contracts for published
@@ -221,8 +225,9 @@ Each successful run also writes:
   reason instead of fabricating deltas.
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
   ingestion classification, quality status, per-expectation pass/fail
-  observations, health warnings, current row counts, run-to-run deltas, and
-  changed artifacts from the manifest.
+  observations, health warnings, current row counts, run-to-run deltas,
+  accepted versus rejected revenue exposure, and changed artifacts from the
+  manifest.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps
