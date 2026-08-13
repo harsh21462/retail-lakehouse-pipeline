@@ -1,0 +1,101 @@
+version: 2
+
+models:
+  - name: gold_revenue_metrics
+    description: Revenue, units, order count, and average order value by order date and category.
+    columns:
+      - name: order_date
+        tests:
+          - not_null
+      - name: category
+        tests:
+          - not_null
+      - name: orders
+        tests:
+          - not_null
+      - name: units
+        tests:
+          - not_null
+      - name: revenue
+        tests:
+          - not_null
+      - name: average_order_value
+        tests:
+          - not_null
+
+  - name: gold_customer_metrics
+    description: Customer-level order count, units, revenue, and first/last order dates.
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: orders
+        tests:
+          - not_null
+      - name: units
+        tests:
+          - not_null
+      - name: revenue
+        tests:
+          - not_null
+      - name: first_order_date
+        tests:
+          - not_null
+      - name: last_order_date
+        tests:
+          - not_null
+
+  - name: gold_category_metrics
+    description: Category-level order count, customer count, units, revenue, average order value, and date range.
+    columns:
+      - name: category
+        tests:
+          - not_null
+          - unique
+      - name: orders
+        tests:
+          - not_null
+      - name: customers
+        tests:
+          - not_null
+      - name: units
+        tests:
+          - not_null
+      - name: revenue
+        tests:
+          - not_null
+      - name: average_order_value
+        tests:
+          - not_null
+      - name: first_order_date
+        tests:
+          - not_null
+      - name: last_order_date
+        tests:
+          - not_null
+
+  - name: gold_rejection_metrics
+    description: Rejected order counts, units, and potential revenue by rejection reason, status, date, and category.
+    columns:
+      - name: rejection_reason
+        tests:
+          - not_null
+      - name: status
+        tests:
+          - not_null
+      - name: order_date
+        tests:
+          - not_null
+      - name: category
+        tests:
+          - not_null
+      - name: rejected_orders
+        tests:
+          - not_null
+      - name: rejected_units
+        tests:
+          - not_null
+      - name: potential_revenue
+        tests:
+          - not_null

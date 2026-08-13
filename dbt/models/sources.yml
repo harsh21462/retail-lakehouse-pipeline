@@ -1,0 +1,49 @@
+version: 2
+
+sources:
+  - name: lakehouse
+    description: Published CSV lakehouse tables produced by the Python pipeline.
+    tables:
+      - name: silver_orders
+        description: Cleaned, analytics-ready orders accepted into the silver layer.
+        columns:
+          - name: order_id
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+            tests:
+              - not_null
+          - name: order_date
+            tests:
+              - not_null
+          - name: category
+            tests:
+              - not_null
+          - name: quantity
+            tests:
+              - not_null
+          - name: unit_price
+            tests:
+              - not_null
+          - name: revenue
+            tests:
+              - not_null
+      - name: rejected_orders
+        description: Valid raw orders excluded from silver by operational config.
+        columns:
+          - name: order_id
+            tests:
+              - not_null
+          - name: rejection_reason
+            tests:
+              - not_null
+          - name: status
+            tests:
+              - not_null
+          - name: order_date
+            tests:
+              - not_null
+          - name: category
+            tests:
+              - not_null

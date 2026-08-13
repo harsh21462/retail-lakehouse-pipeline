@@ -32,11 +32,17 @@ retail-lakehouse-pipeline/
 |   `-- gold_revenue_metrics.sql
 |-- dags/
 |   `-- retail_lakehouse_dag.py
+|-- dbt/
+|   |-- dbt_project.yml
+|   `-- models/
+|       |-- sources.yml
+|       `-- gold/
 |-- src/
 |   |-- pipeline.py
 |   |-- quality_checks.py
 |   `-- sql_transforms.py
 |-- tests/
+|   |-- test_dbt_models.py
 |   |-- test_pipeline.py
 |   |-- test_quality_checks.py
 |   `-- test_sql_transforms.py
@@ -59,7 +65,9 @@ retail-lakehouse-pipeline/
    folders for incremental analytics reads.
 7. Execute version-controlled SQL models to build gold revenue, customer,
    category, and rejection-impact summaries, validating each model's output
-   columns before gold CSVs are published.
+   columns before gold CSVs are published. The `dbt/` project mirrors those
+   gold transformations as dbt-compatible models with source and column tests
+   for teams that want to run the same analytics layer in a warehouse.
 8. Run named data quality expectations, including config-aware checks that
    included order statuses and any configured order-date window match at least
    one source row, and persist their validation report.
@@ -153,6 +161,26 @@ so the SQL artifacts are tested and used in every local and CI pipeline run.
 Each gold model has an explicit output-column contract in the Python pipeline;
 renamed, missing, or extra SQL output columns fail fast before downstream CSV
 artifacts are replaced.
+
+## dbt Models
+
+The repository also includes a dbt project under `dbt/` that mirrors the
+pipeline's gold SQL layer:
+
+- `dbt/models/sources.yml` declares the published `silver_orders` and
+  `rejected_orders` lakehouse tables as dbt sources with basic not-null and
+  uniqueness tests.
+- `dbt/models/gold/gold_revenue_metrics.sql`,
+  `gold_customer_metrics.sql`, `gold_category_metrics.sql`, and
+  `gold_rejection_metrics.sql` define warehouse-ready gold models using dbt
+  `source()` lineage.
+- `dbt/models/gold/schema.yml` documents the model contracts and column-level
+  tests.
+
+Local CI does not require a dbt adapter. Instead, `tests/test_dbt_models.py`
+keeps the dbt model inventory aligned with the executable Python pipeline's
+SQL model registry. Install dbt and a warehouse adapter separately before
+running `dbt build` against a real database.
 
 ## Airflow Scheduling
 
@@ -262,7 +290,7 @@ before rows are partitioned or aggregated.
 - [x] Add Airflow DAG for orchestration.
 - [x] Add executable SQL model for gold transformations.
 - [x] Add manifest-native lineage for source, lakehouse layers, and gold models.
-- Add dbt models and lineage for SQL transformations.
+- [x] Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
 - [x] Add run manifest for pipeline observability.
 - Add Power BI or Streamlit dashboard.

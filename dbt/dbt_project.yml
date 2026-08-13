@@ -1,0 +1,14 @@
+name: retail_lakehouse
+version: "1.0.0"
+config-version: 2
+
+profile: retail_lakehouse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+models:
+  retail_lakehouse:
+    +materialized: table
+    gold:
+      +schema: gold
