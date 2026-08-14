@@ -10,6 +10,7 @@ from src.pipeline import (
     DEFAULT_CONFIG_PATH,
     build_business_impact_summary,
     build_metric_reconciliation,
+    build_partitioned_csv_contract_validation,
     build_run_summary_markdown,
     build_schema_contract_data_validation,
     build_partitioned_parquet_contract_validation,
@@ -20,6 +21,7 @@ from src.pipeline import (
     main,
     parse_args,
     raise_for_failed_metric_reconciliation,
+    raise_for_failed_partitioned_csv_contract_validation,
     raise_for_failed_partitioned_parquet_contract_validation,
     raise_for_failed_schema_contract_data_validation,
     write_partitioned_layer,
@@ -445,6 +447,22 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         ]
         == 0
     )
+    csv_partition_contract = manifest["partition_contract_validation"][
+        "silver_orders_by_date"
+    ]
+    assert csv_partition_contract["success"] is True
+    assert csv_partition_contract["partition_count"] == 2
+    assert csv_partition_contract["expected_columns"] == [
+        "order_id",
+        "customer_id",
+        "order_date",
+        "category",
+        "product",
+        "quantity",
+        "unit_price",
+        "revenue",
+    ]
+    assert csv_partition_contract["failed_partitions"] == []
     parquet_contract = manifest["partition_contract_validation"][
         "silver_orders_by_date_parquet"
     ]
@@ -1358,6 +1376,40 @@ def test_schema_contract_data_validation_detects_published_type_drift(tmp_path):
         match="Schema contract data validation failed",
     ):
         raise_for_failed_schema_contract_data_validation(validation)
+
+
+def test_partitioned_csv_contract_validation_detects_partition_drift(tmp_path):
+    base_dir = tmp_path / "silver_orders_by_date"
+    partition_dir = base_dir / "order_date=2026-06-01"
+    partition_dir.mkdir(parents=True)
+    (partition_dir / "silver_orders.csv").write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,revenue\n"
+        "1001,C001,2026-06-02,Electronics,Keyboard,2,1500.0,3000.0\n",
+        encoding="utf-8",
+    )
+
+    validation = build_partitioned_csv_contract_validation(
+        csv_base_dir=base_dir,
+        contract=build_schema_contracts()["layers"]["silver_orders"],
+        partition_field="order_date",
+        filename="silver_orders.csv",
+    )
+
+    assert validation["success"] is False
+    assert validation["failed_partitions"] == ["2026-06-01"]
+    assert validation["partitions"][0]["invalid_values"] == [
+        {
+            "row_number": 2,
+            "column": "order_date",
+            "value": "2026-06-02",
+            "expected_partition_value": "2026-06-01",
+        }
+    ]
+    with pytest.raises(
+        ValueError,
+        match="Partitioned CSV contract validation failed",
+    ):
+        raise_for_failed_partitioned_csv_contract_validation(validation)
 
 
 def test_partitioned_parquet_contract_validation_detects_schema_drift(tmp_path):

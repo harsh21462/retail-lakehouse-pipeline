@@ -1780,6 +1780,129 @@ def raise_for_failed_partitioned_parquet_contract_validation(validation):
         )
 
 
+def build_partitioned_csv_contract_validation(
+    *,
+    csv_base_dir,
+    contract,
+    partition_field,
+    filename,
+    max_invalid_values=20,
+):
+    csv_base_dir = Path(csv_base_dir)
+    expected_types = {
+        column["name"]: column["type"] for column in contract["columns"]
+    }
+    expected_columns = list(expected_types)
+    partition_dirs = sorted(csv_base_dir.glob(f"{partition_field}=*"))
+    partitions = []
+
+    for partition_dir in partition_dirs:
+        partition_value = partition_dir.name.split("=", 1)[1]
+        csv_path = partition_dir / filename
+        actual_columns = []
+        rows_checked = 0
+        invalid_value_count = 0
+        invalid_values = []
+        read_error = None
+
+        if csv_path.is_file():
+            try:
+                with csv_path.open(newline="", encoding="utf-8") as file:
+                    reader = csv.DictReader(file)
+                    actual_columns = reader.fieldnames or []
+                    if actual_columns == expected_columns:
+                        for row_number, row in enumerate(reader, start=2):
+                            rows_checked += 1
+                            for column, expected_type in expected_types.items():
+                                value = row.get(column)
+                                if _matches_contract_type(value, expected_type):
+                                    continue
+                                invalid_value_count += 1
+                                if len(invalid_values) < max_invalid_values:
+                                    invalid_values.append(
+                                        {
+                                            "row_number": row_number,
+                                            "column": column,
+                                            "value": value,
+                                            "expected_type": expected_type,
+                                        }
+                                    )
+                            if row.get(partition_field) != partition_value:
+                                invalid_value_count += 1
+                                if len(invalid_values) < max_invalid_values:
+                                    invalid_values.append(
+                                        {
+                                            "row_number": row_number,
+                                            "column": partition_field,
+                                            "value": row.get(partition_field),
+                                            "expected_partition_value": (
+                                                partition_value
+                                            ),
+                                        }
+                                    )
+            except Exception as exc:  # pragma: no cover - exact CSV errors vary.
+                read_error = str(exc)
+
+        missing_columns = [
+            column for column in expected_columns if column not in actual_columns
+        ]
+        unexpected_columns = [
+            column for column in actual_columns if column not in expected_columns
+        ]
+        partition_success = (
+            csv_path.is_file()
+            and read_error is None
+            and actual_columns == expected_columns
+            and not missing_columns
+            and not unexpected_columns
+            and invalid_value_count == 0
+        )
+        partitions.append(
+            {
+                "success": partition_success,
+                "partition_value": partition_value,
+                "path": str(csv_path),
+                "expected_columns": expected_columns,
+                "actual_columns": actual_columns,
+                "missing_columns": missing_columns,
+                "unexpected_columns": unexpected_columns,
+                "rows_checked": rows_checked,
+                "invalid_value_count": invalid_value_count,
+                "invalid_values": invalid_values,
+                "read_error": read_error,
+                "order_matches": actual_columns == expected_columns,
+            }
+        )
+
+    failed_partitions = [
+        partition["partition_value"]
+        for partition in partitions
+        if not partition["success"]
+    ]
+    return {
+        "version": 1,
+        "success": bool(partitions) and not failed_partitions,
+        "artifact": "silver_orders_by_date",
+        "path": str(csv_base_dir),
+        "partition_field": partition_field,
+        "file_name": filename,
+        "expected_columns": expected_columns,
+        "partition_count": len(partitions),
+        "failed_partitions": failed_partitions,
+        "max_invalid_values": max_invalid_values,
+        "partitions": partitions,
+    }
+
+
+def raise_for_failed_partitioned_csv_contract_validation(validation):
+    if not validation["success"]:
+        raise ValueError(
+            "Partitioned CSV contract validation failed for "
+            f"{validation['artifact']}: "
+            f"{', '.join(validation['failed_partitions']) or 'no partitions'}"
+        )
+
+
 def build_sql_model_inventory(artifact_paths=None):
     artifact_paths = artifact_paths or {}
     return {
@@ -2115,6 +2238,14 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         manifest["schema_contract_data_validation"]
     )
     manifest["partition_contract_validation"] = {
+        "silver_orders_by_date": (
+            build_partitioned_csv_contract_validation(
+                csv_base_dir=processed_dir / "silver_orders_by_date",
+                contract=manifest["schema_contracts"]["layers"]["silver_orders"],
+                partition_field="order_date",
+                filename="silver_orders.csv",
+            )
+        ),
         "silver_orders_by_date_parquet": (
             build_partitioned_parquet_contract_validation(
                 parquet_base_dir=processed_dir / "silver_orders_by_date_parquet",
@@ -2124,6 +2255,9 @@ def main(config_path=DEFAULT_CONFIG_PATH):
             )
         )
     }
+    raise_for_failed_partitioned_csv_contract_validation(
+        manifest["partition_contract_validation"]["silver_orders_by_date"]
+    )
     raise_for_failed_partitioned_parquet_contract_validation(
         manifest["partition_contract_validation"]["silver_orders_by_date_parquet"]
     )

@@ -83,8 +83,9 @@ retail-lakehouse-pipeline/
     rejection-reason deltas, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
     schema contract, published-artifact schema contract validation, SQL model
-    inventory, published CSV data type validation, partitioned Parquet schema
-    validation, gold metric reconciliation, lineage graph, and deterministic
+    inventory, published CSV data type validation, partitioned CSV validation,
+    partitioned Parquet schema validation, gold metric reconciliation,
+    lineage graph, and deterministic
     artifact checksums for each run.
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
@@ -227,7 +228,9 @@ Each successful run also writes:
   bronze, silver, rejected-order, and gold outputs, contract validation results
   proving the emitted CSV headers still match those declared schemas,
   per-layer CSV data type validation proving emitted values still conform to
-  declared date, integer, and float contracts,
+  declared date, integer, and float contracts, partitioned CSV validation
+  proving each physical partition file still uses the declared silver schema
+  and contains only rows for its directory's `order_date` value,
   partitioned Parquet contract validation proving each physical partition file
   still matches the declared silver schema excluding the directory partition
   column, metric reconciliation proving gold order, unit, and revenue totals
