@@ -149,10 +149,12 @@ Every push and pull request also runs the pipeline as a smoke test and executes
 the full pytest suite in GitHub Actions. The integration test uses isolated
 temporary input and verifies the generated bronze, silver, and gold datasets.
 If a data quality expectation fails, the pipeline writes
-`data_quality_report.json` before stopping so the failed run still has a
-diagnostic artifact. The report includes bounded row-level failure samples
-with the affected expectations and raw source values, capped at 10 rows so a
-bad batch does not create an unbounded diagnostic artifact.
+`data_quality_report.json` and `pipeline_run_summary.md` before stopping so
+the failed run still has diagnostic artifacts. The report includes bounded
+row-level failure samples with the affected expectations and raw source
+values, capped at 10 rows so a bad batch does not create an unbounded
+diagnostic artifact. The Markdown summary includes the failed expectation
+names and sampled row identifiers for quick triage without opening JSON.
 
 The gold layers are defined in `sql/gold_revenue_metrics.sql`,
 `sql/gold_customer_metrics.sql`, `sql/gold_category_metrics.sql`, and
@@ -223,8 +225,8 @@ Each successful run also writes:
   health warning thresholds and any warning breaches, silver partition values,
   per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
-  quality summary with failed expectation names, generated artifact paths,
-  schema contracts for published
+  quality summary with failed expectation names and bounded failed-row sample
+  metadata, generated artifact paths, schema contracts for published
   bronze, silver, rejected-order, and gold outputs, contract validation results
   proving the emitted CSV headers still match those declared schemas,
   per-layer CSV data type validation proving emitted values still conform to
@@ -256,9 +258,9 @@ Each successful run also writes:
   reason instead of fabricating deltas.
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
   ingestion classification, quality status, per-expectation pass/fail
-  observations, health warnings, current row counts, run-to-run deltas,
-  accepted versus rejected revenue exposure, and changed artifacts from the
-  manifest.
+  observations, failed-row sample identifiers when quality checks fail,
+  health warnings, current row counts, run-to-run deltas, accepted versus
+  rejected revenue exposure, and changed artifacts from the manifest.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps

@@ -347,6 +347,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "failed": 0,
             "failed_expectations": [],
         },
+        "failed_row_samples": quality_report["failed_row_samples"],
         "expectations": quality_report["expectations"],
     }
     assert manifest["reconciliation"] == {
@@ -999,6 +1000,13 @@ def test_pipeline_persists_quality_report_before_failing(tmp_path):
     assert results["amounts_are_positive_numbers"]["observed"] == {
         "invalid_order_ids": ["1001"]
     }
+    run_summary = (processed_dir / "pipeline_run_summary.md").read_text(
+        encoding="utf-8"
+    )
+    assert "- Source ingestion: `quality_failed`" in run_summary
+    assert "- Quality: failed" in run_summary
+    assert "## Failed Row Samples" in run_summary
+    assert "| 1 | `1001` | `amounts_are_positive_numbers` |" in run_summary
     assert not (processed_dir / "bronze_orders.csv").exists()
 
 
@@ -1088,6 +1096,7 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
             "failed": 0,
             "failed_expectations": [],
         },
+        "failed_row_samples": quality_report["failed_row_samples"],
         "expectations": quality_report["expectations"],
     }
 
@@ -1573,6 +1582,18 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                 "summary": {
                     "failed_expectations": ["amounts_are_positive_numbers"],
                 },
+                "failed_row_samples": {
+                    "max_samples": 10,
+                    "sample_count": 1,
+                    "omitted_count": 0,
+                    "rows": [
+                        {
+                            "row_number": 2,
+                            "order_id": "1002",
+                            "issues": ["amounts_are_positive_numbers"],
+                        }
+                    ],
+                },
                 "expectations": [
                     {
                         "expectation": "dataset_is_not_empty",
@@ -1644,5 +1665,8 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "| Rejection rate | 0.2 |" in summary
     assert "| Realized revenue rate | 0.8 |" in summary
     assert "- `amounts_are_positive_numbers`" in summary
+    assert "## Failed Row Samples" in summary
+    assert "- Showing 1 of 1 sampled failed rows." in summary
+    assert "| 2 | `1002` | `amounts_are_positive_numbers` |" in summary
     assert "- `silver_rows_below_threshold`: Silver row count fell below threshold" in summary
     assert "- `silver_orders`" in summary

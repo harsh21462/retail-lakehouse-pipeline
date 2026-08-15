@@ -583,6 +583,7 @@ def build_run_manifest(
         "quality": {
             "success": quality_report["success"],
             "summary": quality_report["summary"],
+            "failed_row_samples": quality_report["failed_row_samples"],
             "expectations": quality_report["expectations"],
         },
         "reconciliation": build_row_count_reconciliation(
@@ -1352,6 +1353,25 @@ def _format_quality_expectation_rows(expectations):
     return rows
 
 
+def _format_failed_row_sample_rows(failed_row_samples):
+    if not isinstance(failed_row_samples, dict):
+        return []
+
+    rows = []
+    for sample in failed_row_samples.get("rows", []):
+        if not isinstance(sample, dict):
+            continue
+        issues = sample.get("issues", [])
+        if not isinstance(issues, list):
+            issues = []
+        rows.append(
+            f"| {_format_summary_value(sample.get('row_number'))} | "
+            f"`{_format_summary_value(sample.get('order_id'))}` | "
+            f"{', '.join(f'`{issue}`' for issue in issues) or 'n/a'} |"
+        )
+    return rows
+
+
 def build_run_summary_markdown(manifest):
     run = manifest.get("run", {})
     source = manifest.get("source", {})
@@ -1382,28 +1402,34 @@ def build_run_summary_markdown(manifest):
         f"{_format_summary_value(config.get('order_date_window', {}).get('start'))} "
         f"to {_format_summary_value(config.get('order_date_window', {}).get('end'))}",
         "",
-        "## Row Counts",
-        "",
-        "| Layer | Current rows | Delta |",
-        "| --- | ---: | ---: |",
     ]
 
-    row_count_deltas = comparison.get("row_count_deltas", {})
-    for layer_name in [
-        "bronze",
-        "rejected",
-        "silver",
-        "gold",
-        "gold_customer",
-        "gold_category",
-        "gold_rejection",
-    ]:
-        current_rows = layers.get(layer_name, {}).get("rows")
-        delta = row_count_deltas.get(layer_name, {}).get("delta")
-        lines.append(
-            f"| {layer_name} | {_format_summary_value(current_rows)} | "
-            f"{_format_delta(delta)} |"
+    if layers:
+        lines.extend(
+            [
+                "",
+                "## Row Counts",
+                "",
+                "| Layer | Current rows | Delta |",
+                "| --- | ---: | ---: |",
+            ]
         )
+        row_count_deltas = comparison.get("row_count_deltas", {})
+        for layer_name in [
+            "bronze",
+            "rejected",
+            "silver",
+            "gold",
+            "gold_customer",
+            "gold_category",
+            "gold_rejection",
+        ]:
+            current_rows = layers.get(layer_name, {}).get("rows")
+            delta = row_count_deltas.get(layer_name, {}).get("delta")
+            lines.append(
+                f"| {layer_name} | {_format_summary_value(current_rows)} | "
+                f"{_format_delta(delta)} |"
+            )
 
     if business_impact:
         orders = business_impact.get("orders", {})
@@ -1453,6 +1479,28 @@ def build_run_summary_markdown(manifest):
                 "## Failed Quality Expectations",
                 "",
                 *[f"- `{expectation}`" for expectation in failed_expectations],
+            ]
+        )
+
+    failed_row_samples = quality.get("failed_row_samples", {})
+    sample_rows = _format_failed_row_sample_rows(failed_row_samples)
+    if sample_rows:
+        total_failed_sample_rows = (
+            failed_row_samples.get("sample_count", 0)
+            + failed_row_samples.get("omitted_count", 0)
+        )
+        lines.extend(
+            [
+                "",
+                "## Failed Row Samples",
+                "",
+                f"- Showing {failed_row_samples.get('sample_count', 0)} of "
+                f"{total_failed_sample_rows} "
+                "sampled failed rows.",
+                "",
+                "| Row | Order ID | Issues |",
+                "| ---: | --- | --- |",
+                *sample_rows,
             ]
         )
 
@@ -2053,6 +2101,40 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     quality_report_path = processed_dir / "data_quality_report.json"
     write_json(quality_report_path, quality_report)
     LOGGER.info("Wrote data quality report to %s", quality_report_path)
+    if not quality_report["success"]:
+        summary_path = processed_dir / "pipeline_run_summary.md"
+        write_text(
+            summary_path,
+            build_run_summary_markdown(
+                {
+                    "run": {
+                        "completed_at_utc": (
+                            datetime.now(timezone.utc)
+                            .isoformat()
+                            .replace("+00:00", "Z")
+                        )
+                    },
+                    "source": {
+                        "path": str(raw_path),
+                        "ingestion": {"classification": "quality_failed"},
+                    },
+                    "quality": {
+                        "success": quality_report["success"],
+                        "summary": quality_report["summary"],
+                        "failed_row_samples": quality_report["failed_row_samples"],
+                        "expectations": quality_report["expectations"],
+                    },
+                    "config": {
+                        "included_statuses": config["included_statuses"],
+                        "order_date_window": {
+                            "start": config.get("order_date_start"),
+                            "end": config.get("order_date_end"),
+                        },
+                    },
+                }
+            ),
+        )
+        LOGGER.info("Wrote failed quality run summary to %s", summary_path)
     raise_for_failed_quality(quality_report)
 
     write_layer(processed_dir / "bronze_orders.csv", bronze_rows, bronze_rows[0].keys())
