@@ -9,6 +9,7 @@ from src.pipeline import (
     build_lineage,
     build_order_watermark,
     build_run_comparison,
+    build_runtime_environment,
     build_schema_contracts,
     build_sql_model_inventory,
     load_ingestion_history,
@@ -328,6 +329,23 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "sha256": "stable-gold",
             },
         },
+        "runtime_environment": {
+            "version": 1,
+            "python": {
+                "version": "3.12.0",
+                "implementation": "CPython",
+                "executable": "/venv/bin/python",
+            },
+            "platform": {
+                "system": "Linux",
+                "release": "6.0",
+                "machine": "x86_64",
+            },
+            "dependencies": {"pyarrow": "19.0.0"},
+            "environment_variables": {
+                "RETAIL_LAKEHOUSE_PROJECT_ROOT": "/opt/retail"
+            },
+        },
         "layers": {
             "bronze": {"rows": 10},
             "rejected": {
@@ -370,6 +388,23 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
             "gold_customer_metrics": {
                 "exists": True,
                 "sha256": "new-customer",
+            },
+        },
+        "runtime_environment": {
+            "version": 1,
+            "python": {
+                "version": "3.12.0",
+                "implementation": "CPython",
+                "executable": "/venv/bin/python",
+            },
+            "platform": {
+                "system": "Linux",
+                "release": "6.0",
+                "machine": "x86_64",
+            },
+            "dependencies": {"pyarrow": "20.0.0"},
+            "environment_variables": {
+                "RETAIL_LAKEHOUSE_PROJECT_ROOT": "/opt/retail"
             },
         },
         "layers": {
@@ -468,6 +503,14 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
             "sha256_changed": True,
         },
     }
+    assert comparison["runtime_environment_changed"] is True
+    assert comparison["dependency_version_changes"] == {
+        "pyarrow": {
+            "previous": "19.0.0",
+            "current": "20.0.0",
+            "changed": True,
+        }
+    }
 
 
 def test_run_comparison_records_unavailable_previous_manifest():
@@ -523,6 +566,22 @@ def test_run_comparison_tolerates_malformed_source_status_counts():
             "previous": None,
             "current": 3,
             "delta": None,
+        }
+    }
+
+
+def test_run_comparison_tolerates_missing_runtime_environment():
+    comparison = build_run_comparison(
+        {"runtime_environment": {"dependencies": {"pyarrow": "20.0.0"}}},
+        {"runtime_environment": ["not", "an", "object"]},
+    )
+
+    assert comparison["runtime_environment_changed"] is True
+    assert comparison["dependency_version_changes"] == {
+        "pyarrow": {
+            "previous": None,
+            "current": "20.0.0",
+            "changed": None,
         }
     }
 
@@ -758,6 +817,23 @@ def test_artifact_sha256_changes_when_directory_contents_change(tmp_path):
     file_path.write_text("order_id\n1002\n", encoding="utf-8")
 
     assert artifact_sha256(directory_path) != first_digest
+
+
+def test_runtime_environment_records_reproducibility_metadata(monkeypatch):
+    monkeypatch.setenv("RETAIL_LAKEHOUSE_PROJECT_ROOT", "/opt/retail")
+    monkeypatch.delenv("RETAIL_LAKEHOUSE_PYTHON_BIN", raising=False)
+
+    environment = build_runtime_environment()
+
+    assert environment["version"] == 1
+    assert environment["python"]["version"]
+    assert environment["python"]["implementation"]
+    assert environment["python"]["executable"]
+    assert environment["platform"]["system"] is not None
+    assert "pyarrow" in environment["dependencies"]
+    assert environment["environment_variables"] == {
+        "RETAIL_LAKEHOUSE_PROJECT_ROOT": "/opt/retail"
+    }
 
 
 def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):

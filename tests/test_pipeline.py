@@ -251,6 +251,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["run"]["started_at_utc"].endswith("Z")
     assert manifest["run"]["completed_at_utc"].endswith("Z")
     assert manifest["run"]["duration_ms"] >= 0
+    assert manifest["runtime_environment"]["version"] == 1
+    assert manifest["runtime_environment"]["python"]["version"]
+    assert manifest["runtime_environment"]["platform"]["system"] is not None
+    assert "pyarrow" in manifest["runtime_environment"]["dependencies"]
     assert manifest["source"] == {
         "path": str(raw_path),
         "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
@@ -390,6 +394,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert "# Pipeline Run Summary" in run_summary
     assert f"- Source: `{raw_path}`" in run_summary
     assert "- Quality: passed" in run_summary
+    assert "- Runtime environment changed: n/a" in run_summary
     assert "## Quality Expectations" in run_summary
     assert "## Business Impact" in run_summary
     assert "| Rejected potential revenue | 800.0 |" in run_summary

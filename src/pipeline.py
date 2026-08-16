@@ -2,11 +2,14 @@ import argparse
 import csv
 from collections import Counter
 import hashlib
+from importlib import metadata
 import json
 import logging
 import math
 import os
+import platform
 import shutil
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -146,6 +149,11 @@ SUPPORTED_WARNING_THRESHOLDS = {
     "max_source_lag_days",
     "min_silver_rows",
 }
+RUNTIME_DEPENDENCIES = ["pyarrow"]
+RUNTIME_ENVIRONMENT_VARIABLES = [
+    "RETAIL_LAKEHOUSE_PROJECT_ROOT",
+    "RETAIL_LAKEHOUSE_PYTHON_BIN",
+]
 
 
 def load_config(path=DEFAULT_CONFIG_PATH):
@@ -390,6 +398,37 @@ def artifact_sha256(path):
     return digest.hexdigest()
 
 
+def build_runtime_environment():
+    dependencies = {}
+    for package_name in RUNTIME_DEPENDENCIES:
+        try:
+            dependencies[package_name] = metadata.version(package_name)
+        except metadata.PackageNotFoundError:
+            dependencies[package_name] = None
+
+    environment_variables = {
+        name: os.environ.get(name)
+        for name in RUNTIME_ENVIRONMENT_VARIABLES
+        if os.environ.get(name) is not None
+    }
+
+    return {
+        "version": 1,
+        "python": {
+            "version": platform.python_version(),
+            "implementation": platform.python_implementation(),
+            "executable": sys.executable,
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+        "dependencies": dependencies,
+        "environment_variables": environment_variables,
+    }
+
+
 def load_ingestion_history(path):
     path = Path(path)
     if not path.exists():
@@ -540,6 +579,7 @@ def build_run_manifest(
             "completed_at_utc": completed_at_utc,
             "duration_ms": duration_ms,
         },
+        "runtime_environment": build_runtime_environment(),
         "source": {
             "path": str(raw_path),
             "sha256": source_sha256,
@@ -902,6 +942,18 @@ def build_run_comparison(
             "order_id": watermark.get("order_id"),
         }
 
+    def runtime_environment(manifest):
+        environment = manifest.get("runtime_environment", {})
+        if not isinstance(environment, dict):
+            return {}
+        return environment
+
+    def runtime_dependencies(manifest):
+        dependencies = runtime_environment(manifest).get("dependencies", {})
+        if not isinstance(dependencies, dict):
+            return {}
+        return dependencies
+
     row_count_deltas = {}
     for layer_name in layer_names:
         previous_rows = layer_rows(previous_manifest, layer_name)
@@ -988,6 +1040,24 @@ def build_run_comparison(
             "sha256_changed": sha256_changed,
         }
 
+    previous_runtime = runtime_environment(previous_manifest)
+    current_runtime = runtime_environment(current_manifest)
+    previous_dependencies = runtime_dependencies(previous_manifest)
+    current_dependencies = runtime_dependencies(current_manifest)
+    dependency_version_changes = {}
+    for dependency_name in sorted(set(previous_dependencies) | set(current_dependencies)):
+        previous_version = previous_dependencies.get(dependency_name)
+        current_version = current_dependencies.get(dependency_name)
+        dependency_version_changes[dependency_name] = {
+            "previous": previous_version,
+            "current": current_version,
+            "changed": (
+                previous_version != current_version
+                if previous_version is not None and current_version is not None
+                else None
+            ),
+        }
+
     return {
         "version": 1,
         "previous_manifest_available": True,
@@ -1020,6 +1090,8 @@ def build_run_comparison(
         "source_status_count_deltas": status_count_deltas,
         "rejection_reason_deltas": rejection_reason_deltas,
         "artifact_checksum_changes": artifact_checksum_changes,
+        "runtime_environment_changed": previous_runtime != current_runtime,
+        "dependency_version_changes": dependency_version_changes,
     }
 
 
@@ -1393,6 +1465,8 @@ def build_run_summary_markdown(manifest):
         f"- Health warnings: {health.get('warning_count', 0)}",
         f"- Config checksum changed: "
         f"{_format_summary_value(comparison.get('config_sha256_changed'))}",
+        f"- Runtime environment changed: "
+        f"{_format_summary_value(comparison.get('runtime_environment_changed'))}",
         "",
         "## Config",
         "",

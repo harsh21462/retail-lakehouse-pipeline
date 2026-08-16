@@ -82,7 +82,8 @@ retail-lakehouse-pipeline/
     against the previous manifest, including source status-count and
     rejection-reason deltas, partition inventory, output artifact paths,
     artifact size and checksum inventory, and a machine-readable
-    schema contract, published-artifact schema contract validation, SQL model
+    runtime environment snapshot, schema contract,
+    published-artifact schema contract validation, SQL model
     inventory, published CSV data type validation, partitioned CSV validation,
     partitioned Parquet schema validation, gold metric reconciliation,
     lineage graph, and deterministic
@@ -226,7 +227,9 @@ Each successful run also writes:
   per-partition row counts and file paths,
   rejection reason counts, customer, category, and rejection metric row counts,
   quality summary with failed expectation names and bounded failed-row sample
-  metadata, generated artifact paths, schema contracts for published
+  metadata, generated artifact paths, runtime environment metadata for the
+  Python implementation, executable, platform, selected dependency versions,
+  and scheduler environment variables, schema contracts for published
   bronze, silver, rejected-order, and gold outputs, contract validation results
   proving the emitted CSV headers still match those declared schemas,
   per-layer CSV data type validation proving emitted values still conform to
@@ -253,7 +256,8 @@ Each successful run also writes:
   manifest exists, `run_comparison` records layer row-count deltas, source and
   config checksum changes, quality status changes, warning-count deltas, source
   status-count deltas, rejection-reason count deltas, and per-artifact
-  existence/checksum changes;
+  existence/checksum changes, plus runtime-environment and dependency-version
+  drift;
   if a prior manifest is missing or malformed, the comparison records the
   reason instead of fabricating deltas.
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
