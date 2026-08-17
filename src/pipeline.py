@@ -564,6 +564,7 @@ def build_run_manifest(
         "gold_rejection_metrics": processed_dir / "gold_rejection_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
         "ingestion_history": processed_dir / INGESTION_HISTORY_FILENAME,
+        "data_catalog": processed_dir / "data_catalog.md",
     }
 
     return {
@@ -1389,6 +1390,109 @@ def build_artifact_inventory(artifacts):
     return inventory
 
 
+DATA_CATALOG_LAYER_DESCRIPTIONS = {
+    "bronze_orders": "Raw order records copied into the bronze lakehouse layer.",
+    "rejected_orders": (
+        "Valid raw order records excluded from silver with audit rejection reasons."
+    ),
+    "silver_orders": (
+        "Cleaned analytics-ready orders that satisfy the configured load scope."
+    ),
+    "gold_revenue_metrics": (
+        "Daily category revenue metrics aggregated from accepted silver orders."
+    ),
+    "gold_customer_metrics": (
+        "Customer-level order, unit, revenue, and activity-date metrics."
+    ),
+    "gold_category_metrics": (
+        "Category-level order, customer, unit, revenue, and activity-date metrics."
+    ),
+    "gold_rejection_metrics": (
+        "Rejected-order volume, unit, and potential-revenue metrics by reason."
+    ),
+}
+
+
+def build_data_catalog_markdown(manifest):
+    run = manifest.get("run", {})
+    artifacts = manifest.get("artifacts", {})
+    schema_contracts = manifest.get("schema_contracts", {})
+    layers = manifest.get("layers", {})
+    contracts = schema_contracts.get("layers", {})
+
+    lines = [
+        "# Retail Lakehouse Data Catalog",
+        "",
+        f"- Generated: {_format_summary_value(run.get('completed_at_utc'))}",
+        f"- Source: `{_format_summary_value(run.get('raw_path'))}`",
+        f"- Processed directory: `{_format_summary_value(run.get('processed_dir'))}`",
+        "",
+        "## Published Tables",
+        "",
+        "| Table | Description | Rows | Artifact |",
+        "| --- | --- | ---: | --- |",
+    ]
+
+    row_count_layers = {
+        "bronze_orders": "bronze",
+        "rejected_orders": "rejected",
+        "silver_orders": "silver",
+        "gold_revenue_metrics": "gold",
+        "gold_customer_metrics": "gold_customer",
+        "gold_category_metrics": "gold_category",
+        "gold_rejection_metrics": "gold_rejection",
+    }
+    for table_name in contracts:
+        layer_name = row_count_layers.get(table_name)
+        row_count = layers.get(layer_name, {}).get("rows") if layer_name else None
+        lines.append(
+            f"| `{table_name}` | "
+            f"{DATA_CATALOG_LAYER_DESCRIPTIONS.get(table_name, 'Published table.')} | "
+            f"{_format_summary_value(row_count)} | "
+            f"`{_format_summary_value(artifacts.get(table_name))}` |"
+        )
+
+    for table_name, contract in contracts.items():
+        lines.extend(
+            [
+                "",
+                f"## `{table_name}`",
+                "",
+                f"- Artifact: `{_format_summary_value(artifacts.get(table_name))}`",
+                "",
+                "| Column | Type |",
+                "| --- | --- |",
+            ]
+        )
+        for column in contract.get("columns", []):
+            lines.append(
+                f"| `{_format_summary_value(column.get('name'))}` | "
+                f"`{_format_summary_value(column.get('type'))}` |"
+            )
+
+    partition_inventory = layers.get("silver", {}).get("partition_inventory", [])
+    if partition_inventory:
+        lines.extend(
+            [
+                "",
+                "## Silver Partitions",
+                "",
+                "| Order date | Rows | CSV artifact | Parquet artifact |",
+                "| --- | ---: | --- | --- |",
+            ]
+        )
+        for partition in partition_inventory:
+            lines.append(
+                f"| `{_format_summary_value(partition.get('value'))}` | "
+                f"{_format_summary_value(partition.get('rows'))} | "
+                f"`{_format_summary_value(partition.get('csv_path'))}` | "
+                f"`{_format_summary_value(partition.get('parquet_path'))}` |"
+            )
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _format_summary_value(value):
     if value is None:
         return "n/a"
@@ -2068,6 +2172,11 @@ def build_lineage(*, raw_path, processed_dir, artifacts):
             "path": artifact_paths["ingestion_history"],
         },
         {
+            "id": "catalog.data_catalog",
+            "type": "metadata",
+            "path": artifact_paths["data_catalog"],
+        },
+        {
             "id": "bronze.orders",
             "type": "table",
             "layer": "bronze",
@@ -2132,14 +2241,20 @@ def build_lineage(*, raw_path, processed_dir, artifacts):
         {"from": "source.raw_orders", "to": "quality.raw_order_expectations"},
         {"from": "source.raw_orders", "to": "history.source_ingestion"},
         {"from": "source.raw_orders", "to": "bronze.orders"},
+        {"from": "bronze.orders", "to": "catalog.data_catalog"},
         {"from": "bronze.orders", "to": "silver.orders"},
         {"from": "bronze.orders", "to": "rejected.orders"},
         {"from": "silver.orders", "to": "silver.orders_by_date_csv"},
         {"from": "silver.orders", "to": "silver.orders_by_date_parquet"},
+        {"from": "silver.orders", "to": "catalog.data_catalog"},
         {"from": "silver.orders", "to": "gold.revenue_metrics"},
         {"from": "silver.orders", "to": "gold.customer_metrics"},
         {"from": "silver.orders", "to": "gold.category_metrics"},
         {"from": "rejected.orders", "to": "gold.rejection_metrics"},
+        {"from": "gold.revenue_metrics", "to": "catalog.data_catalog"},
+        {"from": "gold.customer_metrics", "to": "catalog.data_catalog"},
+        {"from": "gold.category_metrics", "to": "catalog.data_catalog"},
+        {"from": "gold.rejection_metrics", "to": "catalog.data_catalog"},
     ]
 
     return {
@@ -2366,12 +2481,6 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         processed_dir / "silver_orders_by_date_parquet",
         "silver_orders.parquet",
     )
-    manifest["artifact_inventory"] = build_artifact_inventory(
-        {
-            name: Path(path)
-            for name, path in manifest["artifacts"].items()
-        }
-    )
     manifest["schema_contracts"] = build_schema_contracts()
     artifact_paths = {
         name: Path(path)
@@ -2428,6 +2537,17 @@ def main(config_path=DEFAULT_CONFIG_PATH):
     raise_for_failed_metric_reconciliation(manifest["metric_reconciliation"])
     manifest["sql_models"] = build_sql_model_inventory(
         artifact_paths
+    )
+    write_text(
+        processed_dir / "data_catalog.md",
+        build_data_catalog_markdown(manifest),
+    )
+    LOGGER.info("Wrote data catalog to %s", processed_dir / "data_catalog.md")
+    manifest["artifact_inventory"] = build_artifact_inventory(
+        {
+            name: Path(path)
+            for name, path in manifest["artifacts"].items()
+        }
     )
     manifest_path = processed_dir / "pipeline_manifest.json"
     previous_manifest, previous_manifest_unavailable_reason = (

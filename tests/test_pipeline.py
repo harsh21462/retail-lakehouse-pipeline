@@ -9,6 +9,7 @@ import pytest
 from src.pipeline import (
     DEFAULT_CONFIG_PATH,
     build_business_impact_summary,
+    build_data_catalog_markdown,
     build_metric_reconciliation,
     build_partitioned_csv_contract_validation,
     build_run_summary_markdown,
@@ -414,7 +415,14 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold_rejection_metrics": str(processed_dir / "gold_rejection_metrics.csv"),
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
         "ingestion_history": str(processed_dir / "ingestion_history.json"),
+        "data_catalog": str(processed_dir / "data_catalog.md"),
     }
+    data_catalog = (processed_dir / "data_catalog.md").read_text(encoding="utf-8")
+    assert "# Retail Lakehouse Data Catalog" in data_catalog
+    assert "| `silver_orders` | Cleaned analytics-ready orders" in data_catalog
+    assert f"`{processed_dir / 'silver_orders.csv'}`" in data_catalog
+    assert "| `revenue` | `float` |" in data_catalog
+    assert "## Silver Partitions" in data_catalog
     assert set(manifest["artifact_inventory"]) == set(manifest["artifacts"])
     for artifact_name, artifact_stats in manifest["artifact_inventory"].items():
         assert artifact_stats["path"] == manifest["artifacts"][artifact_name]
@@ -604,6 +612,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "source.raw_orders",
         "quality.raw_order_expectations",
         "history.source_ingestion",
+        "catalog.data_catalog",
         "bronze.orders",
         "silver.orders",
         "silver.orders_by_date_csv",
@@ -614,6 +623,10 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "gold.category_metrics",
         "gold.rejection_metrics",
     }
+    assert {
+        "from": "silver.orders",
+        "to": "catalog.data_catalog",
+    } in manifest["lineage"]["edges"]
     assert {
         "from": "silver.orders",
         "to": "silver.orders_by_date_parquet",
@@ -1675,3 +1688,72 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "| 2 | `1002` | `amounts_are_positive_numbers` |" in summary
     assert "- `silver_rows_below_threshold`: Silver row count fell below threshold" in summary
     assert "- `silver_orders`" in summary
+
+
+def test_data_catalog_markdown_describes_contracts_and_partitions(tmp_path):
+    processed_dir = tmp_path / "processed"
+    catalog = build_data_catalog_markdown(
+        {
+            "run": {
+                "completed_at_utc": "2026-08-18T01:00:00Z",
+                "raw_path": str(tmp_path / "raw" / "orders.csv"),
+                "processed_dir": str(processed_dir),
+            },
+            "artifacts": {
+                "silver_orders": str(processed_dir / "silver_orders.csv"),
+                "gold_revenue_metrics": str(
+                    processed_dir / "gold_revenue_metrics.csv"
+                ),
+            },
+            "schema_contracts": {
+                "version": 1,
+                "layers": {
+                    "silver_orders": {
+                        "columns": [
+                            {"name": "order_id", "type": "string"},
+                            {"name": "revenue", "type": "float"},
+                        ]
+                    },
+                    "gold_revenue_metrics": {
+                        "columns": [
+                            {"name": "order_date", "type": "date"},
+                            {"name": "revenue", "type": "float"},
+                        ]
+                    },
+                },
+            },
+            "layers": {
+                "silver": {
+                    "rows": 2,
+                    "partition_inventory": [
+                        {
+                            "value": "2026-06-01",
+                            "rows": 2,
+                            "csv_path": str(
+                                processed_dir
+                                / "silver_orders_by_date"
+                                / "order_date=2026-06-01"
+                                / "silver_orders.csv"
+                            ),
+                            "parquet_path": str(
+                                processed_dir
+                                / "silver_orders_by_date_parquet"
+                                / "order_date=2026-06-01"
+                                / "silver_orders.parquet"
+                            ),
+                        }
+                    ],
+                },
+                "gold": {"rows": 1},
+            },
+        }
+    )
+
+    assert "- Generated: 2026-08-18T01:00:00Z" in catalog
+    assert (
+        "| `silver_orders` | Cleaned analytics-ready orders that satisfy "
+        "the configured load scope. | 2 |"
+    ) in catalog
+    assert "## `gold_revenue_metrics`" in catalog
+    assert "| `revenue` | `float` |" in catalog
+    assert "| `2026-06-01` | 2 |" in catalog

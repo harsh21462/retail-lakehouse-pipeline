@@ -852,6 +852,7 @@ def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):
         "gold_rejection_metrics": processed_dir / "gold_rejection_metrics.csv",
         "data_quality_report": processed_dir / "data_quality_report.json",
         "ingestion_history": processed_dir / "ingestion_history.json",
+        "data_catalog": processed_dir / "data_catalog.md",
     }
 
     lineage = build_lineage(
@@ -867,6 +868,7 @@ def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):
         "source.raw_orders",
         "quality.raw_order_expectations",
         "history.source_ingestion",
+        "catalog.data_catalog",
         "bronze.orders",
         "silver.orders",
         "silver.orders_by_date_csv",
@@ -879,6 +881,7 @@ def test_lineage_links_source_layers_gold_models_and_metadata(tmp_path):
     } == node_ids
     assert {"from": "source.raw_orders", "to": "bronze.orders"} in lineage["edges"]
     assert {"from": "silver.orders", "to": "gold.revenue_metrics"} in lineage["edges"]
+    assert {"from": "silver.orders", "to": "catalog.data_catalog"} in lineage["edges"]
     assert {
         "from": "rejected.orders",
         "to": "gold.rejection_metrics",

@@ -92,7 +92,10 @@ retail-lakehouse-pipeline/
     operational review of source ingestion status, quality expectation
     pass/fail details, warning counts, row-count deltas, accepted versus
     rejected revenue exposure, and changed artifacts.
-12. Optionally schedule the same CLI entrypoint through the checked-in Airflow
+12. Write a generated data catalog from the published schema contracts,
+    output paths, row counts, and silver partition inventory so BI consumers
+    have a versioned handoff without reverse-engineering the manifest.
+13. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
@@ -265,6 +268,9 @@ Each successful run also writes:
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, current row counts, run-to-run deltas, accepted versus
   rejected revenue exposure, and changed artifacts from the manifest.
+- `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
+  rejected-order, and gold artifacts, their row counts, descriptions, column
+  names, declared data types, and available silver CSV/Parquet partitions.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps
