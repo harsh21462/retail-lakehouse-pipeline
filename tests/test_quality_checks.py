@@ -13,6 +13,7 @@ from src.pipeline import (
     build_schema_contracts,
     build_sql_model_inventory,
     load_ingestion_history,
+    build_rejection_reason_samples,
     build_row_count_reconciliation,
     build_silver_orders,
     build_silver_outputs,
@@ -306,6 +307,76 @@ def test_row_count_reconciliation_fails_on_unaccounted_rows():
     assert reconciliation["difference"] == 1
     with pytest.raises(ValueError, match="Row count reconciliation failed"):
         raise_for_failed_reconciliation(reconciliation)
+
+
+def test_rejection_reason_samples_are_bounded_by_reason():
+    rejected_rows = [
+        {
+            "order_id": f"100{index}",
+            "order_date": "2026-06-01",
+            "status": "cancelled",
+            "category": "Home",
+            "quantity": "2",
+            "unit_price": "10",
+            "rejection_reason": "status_not_included",
+        }
+        for index in range(4)
+    ]
+    rejected_rows.append(
+        {
+            "order_id": "2001",
+            "order_date": "2026-06-02",
+            "status": "delivered",
+            "category": "Electronics",
+            "quantity": "1",
+            "unit_price": "99.99",
+            "rejection_reason": "order_date_out_of_range",
+        }
+    )
+
+    samples = build_rejection_reason_samples(
+        rejected_rows,
+        max_samples_per_reason=2,
+    )
+
+    assert samples == {
+        "max_samples_per_reason": 2,
+        "reasons": {
+            "order_date_out_of_range": {
+                "sample_count": 1,
+                "omitted_count": 0,
+                "rows": [
+                    {
+                        "order_id": "2001",
+                        "order_date": "2026-06-02",
+                        "status": "delivered",
+                        "category": "Electronics",
+                        "potential_revenue": 99.99,
+                    }
+                ],
+            },
+            "status_not_included": {
+                "sample_count": 2,
+                "omitted_count": 2,
+                "rows": [
+                    {
+                        "order_id": "1000",
+                        "order_date": "2026-06-01",
+                        "status": "cancelled",
+                        "category": "Home",
+                        "potential_revenue": 20.0,
+                    },
+                    {
+                        "order_id": "1001",
+                        "order_date": "2026-06-01",
+                        "status": "cancelled",
+                        "category": "Home",
+                        "potential_revenue": 20.0,
+                    },
+                ],
+            },
+        },
+    }
 
 
 def test_run_comparison_reports_layer_deltas_and_status_changes():

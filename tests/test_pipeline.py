@@ -283,6 +283,24 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "rejected": {
             "rows": 1,
             "reasons": {"status_not_included": 1},
+            "samples": {
+                "max_samples_per_reason": 3,
+                "reasons": {
+                    "status_not_included": {
+                        "sample_count": 1,
+                        "omitted_count": 0,
+                        "rows": [
+                            {
+                                "order_id": "1002",
+                                "order_date": "2026-06-01",
+                                "status": "cancelled",
+                                "category": "Electronics",
+                                "potential_revenue": 800.0,
+                            }
+                        ],
+                    }
+                },
+            },
         },
         "silver": {
             "rows": 2,
@@ -398,6 +416,11 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert "- Runtime environment changed: n/a" in run_summary
     assert "## Quality Expectations" in run_summary
     assert "## Business Impact" in run_summary
+    assert "## Rejected Order Samples" in run_summary
+    assert (
+        "| `status_not_included` | `1002` | 2026-06-01 | "
+        "`cancelled` | `Electronics` | 800.0 |"
+    ) in run_summary
     assert "| Rejected potential revenue | 800.0 |" in run_summary
     assert "| `dataset_is_not_empty` | passed | row_count=3 |" in run_summary
     assert "| silver | 2 | n/a |" in run_summary
@@ -1106,6 +1129,37 @@ def test_pipeline_applies_configured_order_date_window(tmp_path):
         "order_date_out_of_range": 1,
         "status_not_included": 1,
     }
+    assert manifest["layers"]["rejected"]["samples"] == {
+        "max_samples_per_reason": 3,
+        "reasons": {
+            "order_date_out_of_range": {
+                "sample_count": 1,
+                "omitted_count": 0,
+                "rows": [
+                    {
+                        "order_id": "1001",
+                        "order_date": "2026-06-01",
+                        "status": "delivered",
+                        "category": "Electronics",
+                        "potential_revenue": 3000.0,
+                    }
+                ],
+            },
+            "status_not_included": {
+                "sample_count": 1,
+                "omitted_count": 0,
+                "rows": [
+                    {
+                        "order_id": "1003",
+                        "order_date": "2026-06-03",
+                        "status": "cancelled",
+                        "category": "Home",
+                        "potential_revenue": 1200.0,
+                    }
+                ],
+            },
+        },
+    }
     assert manifest["quality"] == {
         "success": True,
         "summary": {
@@ -1643,6 +1697,27 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
             },
             "layers": {
                 "bronze": {"rows": 10},
+                "rejected": {
+                    "rows": 2,
+                    "samples": {
+                        "max_samples_per_reason": 1,
+                        "reasons": {
+                            "status_not_included": {
+                                "sample_count": 1,
+                                "omitted_count": 1,
+                                "rows": [
+                                    {
+                                        "order_id": "1005",
+                                        "order_date": "2026-06-03",
+                                        "status": "cancelled",
+                                        "category": "Home",
+                                        "potential_revenue": 300.0,
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                },
                 "silver": {"rows": 8},
             },
             "business_impact": {
@@ -1682,6 +1757,12 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "## Business Impact" in summary
     assert "| Rejection rate | 0.2 |" in summary
     assert "| Realized revenue rate | 0.8 |" in summary
+    assert "## Rejected Order Samples" in summary
+    assert "- Showing 1 sampled rejected rows; 1 omitted by per-reason caps." in summary
+    assert (
+        "| `status_not_included` | `1005` | 2026-06-03 | "
+        "`cancelled` | `Home` | 300.0 |"
+    ) in summary
     assert "- `amounts_are_positive_numbers`" in summary
     assert "## Failed Row Samples" in summary
     assert "- Showing 1 of 1 sampled failed rows." in summary

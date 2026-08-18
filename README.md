@@ -77,7 +77,8 @@ retail-lakehouse-pipeline/
     checksum, source ingestion classification, config path and checksum,
     config, row counts, quality status, row count reconciliation, source and
     silver data profiles with deterministic high-watermarks,
-    rejection reason counts, accepted and rejected business-impact metrics,
+    rejection reason counts, bounded rejected-order samples by reason,
+    accepted and rejected business-impact metrics,
     non-blocking health warnings, run-to-run comparison
     against the previous manifest, including source status-count and
     rejection-reason deltas, partition inventory, output artifact paths,
@@ -91,7 +92,8 @@ retail-lakehouse-pipeline/
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
     pass/fail details, warning counts, row-count deltas, accepted versus
-    rejected revenue exposure, and changed artifacts.
+    rejected revenue exposure, sampled rejected orders by reason, and changed
+    artifacts.
 12. Write a generated data catalog from the published schema contracts,
     output paths, row counts, and silver partition inventory so BI consumers
     have a versioned handoff without reverse-engineering the manifest.
@@ -228,7 +230,8 @@ Each successful run also writes:
   rate, realized revenue rate, and average order value metrics, configured
   health warning thresholds and any warning breaches, silver partition values,
   per-partition row counts and file paths,
-  rejection reason counts, customer, category, and rejection metric row counts,
+  rejection reason counts, bounded rejected-order samples grouped by reason,
+  customer, category, and rejection metric row counts,
   quality summary with failed expectation names and bounded failed-row sample
   metadata, generated artifact paths, runtime environment metadata for the
   Python implementation, executable, platform, selected dependency versions,
@@ -267,7 +270,8 @@ Each successful run also writes:
   ingestion classification, quality status, per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, current row counts, run-to-run deltas, accepted versus
-  rejected revenue exposure, and changed artifacts from the manifest.
+  rejected revenue exposure, sampled rejected orders by reason, and changed
+  artifacts from the manifest.
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
   rejected-order, and gold artifacts, their row counts, descriptions, column
   names, declared data types, and available silver CSV/Parquet partitions.

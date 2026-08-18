@@ -154,6 +154,7 @@ RUNTIME_ENVIRONMENT_VARIABLES = [
     "RETAIL_LAKEHOUSE_PROJECT_ROOT",
     "RETAIL_LAKEHOUSE_PYTHON_BIN",
 ]
+MAX_REJECTION_REASON_SAMPLES = 3
 
 
 def load_config(path=DEFAULT_CONFIG_PATH):
@@ -611,6 +612,7 @@ def build_run_manifest(
                         ).items()
                     )
                 ),
+                "samples": build_rejection_reason_samples(rejected_rows),
             },
             "silver": {
                 "rows": len(silver_rows),
@@ -694,6 +696,46 @@ def build_row_count_reconciliation(bronze_rows, silver_rows, rejected_rows):
         "rejected_rows": rejected_count,
         "accounted_rows": accounted_count,
         "difference": bronze_count - accounted_count,
+    }
+
+
+def build_rejection_reason_samples(
+    rejected_rows,
+    max_samples_per_reason=MAX_REJECTION_REASON_SAMPLES,
+):
+    samples_by_reason = {}
+    for row in rejected_rows:
+        reason = row["rejection_reason"]
+        reason_samples = samples_by_reason.setdefault(reason, [])
+        if len(reason_samples) >= max_samples_per_reason:
+            continue
+        reason_samples.append(
+            {
+                "order_id": row["order_id"],
+                "order_date": row["order_date"],
+                "status": row["status"],
+                "category": row["category"],
+                "potential_revenue": round(
+                    int(row["quantity"]) * float(row["unit_price"]),
+                    2,
+                ),
+            }
+        )
+
+    reason_counts = Counter(row["rejection_reason"] for row in rejected_rows)
+    return {
+        "max_samples_per_reason": max_samples_per_reason,
+        "reasons": {
+            reason: {
+                "sample_count": len(samples_by_reason.get(reason, [])),
+                "omitted_count": max(
+                    reason_counts[reason] - len(samples_by_reason.get(reason, [])),
+                    0,
+                ),
+                "rows": samples_by_reason.get(reason, []),
+            }
+            for reason in sorted(reason_counts)
+        },
     }
 
 
@@ -1548,6 +1590,27 @@ def _format_failed_row_sample_rows(failed_row_samples):
     return rows
 
 
+def _format_rejected_order_sample_rows(rejected_samples):
+    if not isinstance(rejected_samples, dict):
+        return []
+
+    rows = []
+    for reason, sample_group in sorted(rejected_samples.get("reasons", {}).items()):
+        if not isinstance(sample_group, dict):
+            continue
+        for sample in sample_group.get("rows", []):
+            if not isinstance(sample, dict):
+                continue
+            rows.append(
+                f"| `{reason}` | `{_format_summary_value(sample.get('order_id'))}` | "
+                f"{_format_summary_value(sample.get('order_date'))} | "
+                f"`{_format_summary_value(sample.get('status'))}` | "
+                f"`{_format_summary_value(sample.get('category'))}` | "
+                f"{_format_summary_value(sample.get('potential_revenue'))} |"
+            )
+    return rows
+
+
 def build_run_summary_markdown(manifest):
     run = manifest.get("run", {})
     source = manifest.get("source", {})
@@ -1631,6 +1694,33 @@ def build_run_summary_markdown(manifest):
                 f"{_format_summary_value(revenue.get('rejected_potential'))} |",
                 f"| Realized revenue rate | "
                 f"{_format_summary_value(revenue.get('realized_rate'))} |",
+            ]
+        )
+
+    rejected_samples = layers.get("rejected", {}).get("samples", {})
+    rejected_sample_rows = _format_rejected_order_sample_rows(rejected_samples)
+    if rejected_sample_rows:
+        total_sampled = sum(
+            sample_group.get("sample_count", 0)
+            for sample_group in rejected_samples.get("reasons", {}).values()
+            if isinstance(sample_group, dict)
+        )
+        total_omitted = sum(
+            sample_group.get("omitted_count", 0)
+            for sample_group in rejected_samples.get("reasons", {}).values()
+            if isinstance(sample_group, dict)
+        )
+        lines.extend(
+            [
+                "",
+                "## Rejected Order Samples",
+                "",
+                f"- Showing {total_sampled} sampled rejected rows; "
+                f"{total_omitted} omitted by per-reason caps.",
+                "",
+                "| Reason | Order ID | Order date | Status | Category | Potential revenue |",
+                "| --- | --- | --- | --- | --- | ---: |",
+                *rejected_sample_rows,
             ]
         )
 
