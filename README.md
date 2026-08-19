@@ -97,7 +97,10 @@ retail-lakehouse-pipeline/
 12. Write a generated data catalog from the published schema contracts,
     output paths, row counts, and silver partition inventory so BI consumers
     have a versioned handoff without reverse-engineering the manifest.
-13. Optionally schedule the same CLI entrypoint through the checked-in Airflow
+13. Write a dependency-free `dashboard.html` with run health, accepted and
+    rejected revenue KPIs, row-count bars, status mix, and rejection reasons
+    for portfolio review or lightweight operational handoff.
+14. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
@@ -275,6 +278,9 @@ Each successful run also writes:
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
   rejected-order, and gold artifacts, their row counts, descriptions, column
   names, declared data types, and available silver CSV/Parquet partitions.
+- `dashboard.html` with a self-contained visual dashboard for run health,
+  quality status, business-impact KPIs, layer row counts, source status mix,
+  rejected-order reasons, and configured run scope.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps
@@ -312,4 +318,5 @@ before rows are partitioned or aggregated.
 - [x] Add dbt models and lineage for SQL transformations.
 - [x] Add GitHub Actions for automated tests.
 - [x] Add run manifest for pipeline observability.
+- [x] Add lightweight dashboard artifact.
 - Add Power BI or Streamlit dashboard.

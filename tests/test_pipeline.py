@@ -10,6 +10,7 @@ from src.pipeline import (
     DEFAULT_CONFIG_PATH,
     build_business_impact_summary,
     build_data_catalog_markdown,
+    build_dashboard_html,
     build_metric_reconciliation,
     build_partitioned_csv_contract_validation,
     build_run_summary_markdown,
@@ -439,7 +440,14 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "data_quality_report": str(processed_dir / "data_quality_report.json"),
         "ingestion_history": str(processed_dir / "ingestion_history.json"),
         "data_catalog": str(processed_dir / "data_catalog.md"),
+        "dashboard": str(processed_dir / "dashboard.html"),
     }
+    dashboard = (processed_dir / "dashboard.html").read_text(encoding="utf-8")
+    assert "<title>Retail Lakehouse Dashboard</title>" in dashboard
+    assert "Accepted orders" in dashboard
+    assert "Rejected potential revenue" in dashboard
+    assert "status_not_included" in dashboard
+    assert f"{raw_path}" in dashboard
     data_catalog = (processed_dir / "data_catalog.md").read_text(encoding="utf-8")
     assert "# Retail Lakehouse Data Catalog" in data_catalog
     assert "| `silver_orders` | Cleaned analytics-ready orders" in data_catalog
@@ -636,6 +644,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "quality.raw_order_expectations",
         "history.source_ingestion",
         "catalog.data_catalog",
+        "dashboard.operational_dashboard",
         "bronze.orders",
         "silver.orders",
         "silver.orders_by_date_csv",
@@ -649,6 +658,14 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert {
         "from": "silver.orders",
         "to": "catalog.data_catalog",
+    } in manifest["lineage"]["edges"]
+    assert {
+        "from": "silver.orders",
+        "to": "dashboard.operational_dashboard",
+    } in manifest["lineage"]["edges"]
+    assert {
+        "from": "rejected.orders",
+        "to": "dashboard.operational_dashboard",
     } in manifest["lineage"]["edges"]
     assert {
         "from": "silver.orders",
@@ -1838,3 +1855,64 @@ def test_data_catalog_markdown_describes_contracts_and_partitions(tmp_path):
     assert "## `gold_revenue_metrics`" in catalog
     assert "| `revenue` | `float` |" in catalog
     assert "| `2026-06-01` | 2 |" in catalog
+
+
+def test_dashboard_html_escapes_manifest_values():
+    dashboard = build_dashboard_html(
+        {
+            "run": {"completed_at_utc": "2026-08-19T01:00:00Z"},
+            "source": {
+                "path": "/tmp/<raw>.csv",
+                "profile": {"status_counts": {"delivered<script>": 1}},
+            },
+            "config": {
+                "included_statuses": ["delivered"],
+                "order_date_window": {"start": None, "end": None},
+            },
+            "health": {
+                "warning_count": 1,
+                "warnings": [
+                    {
+                        "name": "source_lag",
+                        "message": "Source <too old>",
+                    }
+                ],
+            },
+            "quality": {
+                "success": False,
+                "summary": {"failed_expectations": ["amounts_are_positive_numbers"]},
+            },
+            "layers": {
+                "bronze": {"rows": 2},
+                "rejected": {
+                    "rows": 1,
+                    "reasons": {"status_not_included": 1},
+                },
+                "silver": {"rows": 1},
+            },
+            "business_impact": {
+                "orders": {
+                    "accepted": 1,
+                    "rejected": 1,
+                    "rejection_rate": 0.5,
+                },
+                "revenue": {
+                    "accepted": 100.0,
+                    "rejected_potential": 25.0,
+                    "realized_rate": 0.8,
+                },
+            },
+            "run_comparison": {
+                "config_sha256_changed": False,
+                "runtime_environment_changed": False,
+            },
+        }
+    )
+
+    assert "Retail Lakehouse Dashboard" in dashboard
+    assert "50.0%" in dashboard
+    assert "80.0%" in dashboard
+    assert "/tmp/&lt;raw&gt;.csv" in dashboard
+    assert "Source &lt;too old&gt;" in dashboard
+    assert "delivered&lt;script&gt;" in dashboard
+    assert "<script>" not in dashboard

@@ -2,6 +2,7 @@ import argparse
 import csv
 from collections import Counter
 import hashlib
+import html
 from importlib import metadata
 import json
 import logging
@@ -566,6 +567,7 @@ def build_run_manifest(
         "data_quality_report": processed_dir / "data_quality_report.json",
         "ingestion_history": processed_dir / INGESTION_HISTORY_FILENAME,
         "data_catalog": processed_dir / "data_catalog.md",
+        "dashboard": processed_dir / "dashboard.html",
     }
 
     return {
@@ -1455,6 +1457,252 @@ DATA_CATALOG_LAYER_DESCRIPTIONS = {
 }
 
 
+def _escape_html(value):
+    return html.escape(_format_summary_value(value), quote=True)
+
+
+def _format_percent(value):
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return _format_summary_value(value)
+
+
+def _dashboard_metric_card(label, value):
+    return (
+        '<section class="metric-card">'
+        f"<span>{_escape_html(label)}</span>"
+        f"<strong>{_escape_html(value)}</strong>"
+        "</section>"
+    )
+
+
+def _dashboard_bar_rows(values, *, value_key, label_key="label"):
+    numeric_values = [
+        float(item.get(value_key, 0) or 0)
+        for item in values
+        if isinstance(item, dict)
+    ]
+    max_value = max(numeric_values, default=0)
+    rows = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        value = float(item.get(value_key, 0) or 0)
+        width = 0 if max_value <= 0 else round((value / max_value) * 100, 2)
+        rows.append(
+            "<tr>"
+            f"<th>{_escape_html(item.get(label_key))}</th>"
+            "<td>"
+            '<div class="bar-track">'
+            f'<span class="bar-fill" style="width: {width}%"></span>'
+            "</div>"
+            "</td>"
+            f"<td>{_escape_html(item.get(value_key))}</td>"
+            "</tr>"
+        )
+    return rows
+
+
+def build_dashboard_html(manifest):
+    """Build a dependency-free operational dashboard from a pipeline manifest."""
+    run = manifest.get("run", {})
+    source = manifest.get("source", {})
+    config = manifest.get("config", {})
+    health = manifest.get("health", {})
+    quality = manifest.get("quality", {})
+    layers = manifest.get("layers", {})
+    business_impact = manifest.get("business_impact", {})
+    comparison = manifest.get("run_comparison", {})
+
+    layer_rows = []
+    for layer_name in [
+        "bronze",
+        "rejected",
+        "silver",
+        "gold",
+        "gold_customer",
+        "gold_category",
+        "gold_rejection",
+    ]:
+        row_count = layers.get(layer_name, {}).get("rows")
+        if row_count is not None:
+            layer_rows.append({"label": layer_name, "rows": row_count})
+
+    rejection_reasons = [
+        {"label": reason, "rows": count}
+        for reason, count in sorted(
+            layers.get("rejected", {}).get("reasons", {}).items()
+        )
+    ]
+    source_statuses = [
+        {"label": status, "rows": count}
+        for status, count in sorted(
+            source.get("profile", {}).get("status_counts", {}).items()
+        )
+    ]
+    warnings = health.get("warnings", [])
+    failed_expectations = quality.get("summary", {}).get(
+        "failed_expectations", []
+    )
+    orders = business_impact.get("orders", {})
+    revenue = business_impact.get("revenue", {})
+    window = config.get("order_date_window", {})
+
+    cards = [
+        _dashboard_metric_card("Accepted orders", orders.get("accepted")),
+        _dashboard_metric_card("Rejected orders", orders.get("rejected")),
+        _dashboard_metric_card(
+            "Rejection rate",
+            _format_percent(orders.get("rejection_rate")),
+        ),
+        _dashboard_metric_card("Accepted revenue", revenue.get("accepted")),
+        _dashboard_metric_card(
+            "Rejected potential revenue",
+            revenue.get("rejected_potential"),
+        ),
+        _dashboard_metric_card(
+            "Realized revenue rate",
+            _format_percent(revenue.get("realized_rate")),
+        ),
+    ]
+
+    quality_class = "status-ok" if quality.get("success") else "status-failed"
+    warning_class = "status-ok" if health.get("warning_count", 0) == 0 else "status-warn"
+    layer_bar_rows = _dashboard_bar_rows(layer_rows, value_key="rows")
+    status_bar_rows = _dashboard_bar_rows(source_statuses, value_key="rows")
+    rejection_bar_rows = _dashboard_bar_rows(rejection_reasons, value_key="rows")
+
+    warning_items = (
+        [
+            f"<li><strong>{_escape_html(warning.get('name'))}</strong>: "
+            f"{_escape_html(warning.get('message'))}</li>"
+            for warning in warnings
+            if isinstance(warning, dict)
+        ]
+        or ["<li>No health warnings recorded.</li>"]
+    )
+    failed_expectation_items = (
+        [f"<li>{_escape_html(expectation)}</li>" for expectation in failed_expectations]
+        or ["<li>No failed expectations.</li>"]
+    )
+
+    return "\n".join(
+        [
+            "<!doctype html>",
+            '<html lang="en">',
+            "<head>",
+            '<meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            "<title>Retail Lakehouse Dashboard</title>",
+            "<style>",
+            ":root { color-scheme: light; font-family: Arial, sans-serif; }",
+            "body { margin: 0; background: #f6f7f9; color: #20242a; }",
+            "header { background: #18324a; color: white; padding: 28px 32px; }",
+            "main { max-width: 1180px; margin: 0 auto; padding: 24px; }",
+            "h1, h2 { margin: 0; }",
+            "h1 { font-size: 32px; }",
+            "h2 { font-size: 20px; margin-bottom: 12px; }",
+            ".subtitle { margin-top: 8px; color: #dce8f2; }",
+            ".grid { display: grid; gap: 16px; }",
+            ".metrics { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }",
+            ".metric-card, .panel { background: white; border: 1px solid #d8dee6; border-radius: 8px; }",
+            ".metric-card { padding: 16px; }",
+            ".metric-card span { color: #5d6875; display: block; font-size: 13px; }",
+            ".metric-card strong { display: block; font-size: 24px; margin-top: 8px; }",
+            ".panel { padding: 18px; margin-top: 18px; }",
+            ".two-col { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }",
+            ".status { display: inline-block; border-radius: 999px; font-weight: 700; padding: 4px 10px; }",
+            ".status-ok { background: #d7f2df; color: #155829; }",
+            ".status-warn { background: #fff1cc; color: #754a00; }",
+            ".status-failed { background: #ffe0df; color: #8a1f17; }",
+            "table { border-collapse: collapse; width: 100%; }",
+            "th, td { border-bottom: 1px solid #e7ebf0; padding: 9px 8px; text-align: left; }",
+            "th { color: #4b5563; font-size: 13px; }",
+            ".bar-track { background: #edf1f5; height: 12px; border-radius: 999px; overflow: hidden; }",
+            ".bar-fill { background: #2f7d7e; display: block; height: 100%; }",
+            "ul { margin: 0; padding-left: 18px; }",
+            "@media (max-width: 640px) { header, main { padding: 18px; } h1 { font-size: 24px; } }",
+            "</style>",
+            "</head>",
+            "<body>",
+            "<header>",
+            "<h1>Retail Lakehouse Dashboard</h1>",
+            (
+                '<p class="subtitle">'
+                f"Run completed {_escape_html(run.get('completed_at_utc'))} from "
+                f"{_escape_html(source.get('path'))}"
+                "</p>"
+            ),
+            "</header>",
+            "<main>",
+            '<section class="grid metrics">',
+            *cards,
+            "</section>",
+            '<section class="panel">',
+            "<h2>Run Health</h2>",
+            (
+                "<p>"
+                f'Quality <span class="status {quality_class}">'
+                f"{'passed' if quality.get('success') else 'failed'}"
+                "</span> "
+                f'Warnings <span class="status {warning_class}">'
+                f"{_escape_html(health.get('warning_count', 0))}"
+                "</span>"
+                "</p>"
+            ),
+            "<ul>",
+            *warning_items,
+            "</ul>",
+            "</section>",
+            '<section class="grid two-col">',
+            '<div class="panel">',
+            "<h2>Layer Row Counts</h2>",
+            "<table><thead><tr><th>Layer</th><th>Relative size</th><th>Rows</th></tr></thead><tbody>",
+            *layer_bar_rows,
+            "</tbody></table>",
+            "</div>",
+            '<div class="panel">',
+            "<h2>Source Status Mix</h2>",
+            "<table><thead><tr><th>Status</th><th>Relative size</th><th>Rows</th></tr></thead><tbody>",
+            *status_bar_rows,
+            "</tbody></table>",
+            "</div>",
+            "</section>",
+            '<section class="grid two-col">',
+            '<div class="panel">',
+            "<h2>Rejected Order Reasons</h2>",
+            "<table><thead><tr><th>Reason</th><th>Relative size</th><th>Rows</th></tr></thead><tbody>",
+            *(rejection_bar_rows or ['<tr><td colspan="3">No rejected orders.</td></tr>']),
+            "</tbody></table>",
+            "</div>",
+            '<div class="panel">',
+            "<h2>Run Scope</h2>",
+            "<table><tbody>",
+            f"<tr><th>Included statuses</th><td>{_escape_html(', '.join(config.get('included_statuses', [])) or 'n/a')}</td></tr>",
+            f"<tr><th>Order date start</th><td>{_escape_html(window.get('start'))}</td></tr>",
+            f"<tr><th>Order date end</th><td>{_escape_html(window.get('end'))}</td></tr>",
+            f"<tr><th>Config changed</th><td>{_escape_html(comparison.get('config_sha256_changed'))}</td></tr>",
+            f"<tr><th>Runtime changed</th><td>{_escape_html(comparison.get('runtime_environment_changed'))}</td></tr>",
+            "</tbody></table>",
+            "</div>",
+            "</section>",
+            '<section class="panel">',
+            "<h2>Failed Quality Expectations</h2>",
+            "<ul>",
+            *failed_expectation_items,
+            "</ul>",
+            "</section>",
+            "</main>",
+            "</body>",
+            "</html>",
+            "",
+        ]
+    )
+
+
 def build_data_catalog_markdown(manifest):
     run = manifest.get("run", {})
     artifacts = manifest.get("artifacts", {})
@@ -2267,6 +2515,11 @@ def build_lineage(*, raw_path, processed_dir, artifacts):
             "path": artifact_paths["data_catalog"],
         },
         {
+            "id": "dashboard.operational_dashboard",
+            "type": "dashboard",
+            "path": artifact_paths["dashboard"],
+        },
+        {
             "id": "bronze.orders",
             "type": "table",
             "layer": "bronze",
@@ -2337,14 +2590,18 @@ def build_lineage(*, raw_path, processed_dir, artifacts):
         {"from": "silver.orders", "to": "silver.orders_by_date_csv"},
         {"from": "silver.orders", "to": "silver.orders_by_date_parquet"},
         {"from": "silver.orders", "to": "catalog.data_catalog"},
+        {"from": "silver.orders", "to": "dashboard.operational_dashboard"},
         {"from": "silver.orders", "to": "gold.revenue_metrics"},
         {"from": "silver.orders", "to": "gold.customer_metrics"},
         {"from": "silver.orders", "to": "gold.category_metrics"},
         {"from": "rejected.orders", "to": "gold.rejection_metrics"},
+        {"from": "rejected.orders", "to": "dashboard.operational_dashboard"},
         {"from": "gold.revenue_metrics", "to": "catalog.data_catalog"},
         {"from": "gold.customer_metrics", "to": "catalog.data_catalog"},
         {"from": "gold.category_metrics", "to": "catalog.data_catalog"},
         {"from": "gold.rejection_metrics", "to": "catalog.data_catalog"},
+        {"from": "gold.revenue_metrics", "to": "dashboard.operational_dashboard"},
+        {"from": "gold.rejection_metrics", "to": "dashboard.operational_dashboard"},
     ]
 
     return {
@@ -2633,6 +2890,11 @@ def main(config_path=DEFAULT_CONFIG_PATH):
         build_data_catalog_markdown(manifest),
     )
     LOGGER.info("Wrote data catalog to %s", processed_dir / "data_catalog.md")
+    write_text(
+        processed_dir / "dashboard.html",
+        build_dashboard_html(manifest),
+    )
+    LOGGER.info("Wrote operational dashboard to %s", processed_dir / "dashboard.html")
     manifest["artifact_inventory"] = build_artifact_inventory(
         {
             name: Path(path)
