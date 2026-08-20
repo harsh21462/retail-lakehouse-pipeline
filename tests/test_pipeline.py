@@ -278,7 +278,12 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
         "order_date_window": {"start": None, "end": None},
         "warning_thresholds": {},
     }
-    assert manifest["health"] == {"warnings": [], "warning_count": 0}
+    assert manifest["health"] == {
+        "status": "passed",
+        "warnings": [],
+        "warning_count": 0,
+        "threshold_breaches": [],
+    }
     assert manifest["layers"] == {
         "bronze": {"rows": 3},
         "rejected": {
@@ -1226,6 +1231,7 @@ def test_pipeline_persists_health_warnings_without_failing_run(tmp_path):
         "min_silver_rows": 2,
     }
     assert manifest["health"] == {
+        "status": "warning",
         "warnings": [
             {
                 "name": "rejection_rate_above_threshold",
@@ -1251,6 +1257,24 @@ def test_pipeline_persists_health_warnings_without_failing_run(tmp_path):
             },
         ],
         "warning_count": 2,
+        "threshold_breaches": [
+            {
+                "name": "rejection_rate_above_threshold",
+                "severity": "warning",
+                "observed": {
+                    "bronze_rows": 2,
+                    "rejected_rows": 1,
+                    "rejection_rate": 0.5,
+                },
+                "threshold": {"max_rejection_rate": 0.25},
+            },
+            {
+                "name": "silver_rows_below_threshold",
+                "severity": "warning",
+                "observed": {"silver_rows": 1},
+                "threshold": {"min_silver_rows": 2},
+            },
+        ],
     }
     assert read_rows(processed_dir / "silver_orders.csv") == [
         {
@@ -1701,7 +1725,18 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                 "warnings": [
                     {
                         "name": "silver_rows_below_threshold",
+                        "severity": "warning",
                         "message": "Silver row count fell below threshold",
+                        "observed": {"silver_rows": 8},
+                        "threshold": {"min_silver_rows": 10},
+                    }
+                ],
+                "threshold_breaches": [
+                    {
+                        "name": "silver_rows_below_threshold",
+                        "severity": "warning",
+                        "observed": {"silver_rows": 8},
+                        "threshold": {"min_silver_rows": 10},
                     }
                 ],
             },
@@ -1785,6 +1820,11 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "- Showing 1 of 1 sampled failed rows." in summary
     assert "| 2 | `1002` | `amounts_are_positive_numbers` |" in summary
     assert "- `silver_rows_below_threshold`: Silver row count fell below threshold" in summary
+    assert "## Health Threshold Breaches" in summary
+    assert (
+        '| `silver_rows_below_threshold` | warning | `{"silver_rows": 8}` | '
+        '`{"min_silver_rows": 10}` |'
+    ) in summary
     assert "- `silver_orders`" in summary
 
 
@@ -1874,7 +1914,18 @@ def test_dashboard_html_escapes_manifest_values():
                 "warnings": [
                     {
                         "name": "source_lag",
+                        "severity": "warning",
                         "message": "Source <too old>",
+                        "observed": {"source_lag_days": 9},
+                        "threshold": {"max_source_lag_days": 7},
+                    }
+                ],
+                "threshold_breaches": [
+                    {
+                        "name": "source_lag",
+                        "severity": "warning",
+                        "observed": {"source_lag_days": 9},
+                        "threshold": {"max_source_lag_days": 7},
                     }
                 ],
             },
@@ -1914,5 +1965,8 @@ def test_dashboard_html_escapes_manifest_values():
     assert "80.0%" in dashboard
     assert "/tmp/&lt;raw&gt;.csv" in dashboard
     assert "Source &lt;too old&gt;" in dashboard
+    assert "source_lag" in dashboard
+    assert "{&quot;source_lag_days&quot;: 9}" in dashboard
+    assert "{&quot;max_source_lag_days&quot;: 7}" in dashboard
     assert "delivered&lt;script&gt;" in dashboard
     assert "<script>" not in dashboard

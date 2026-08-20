@@ -88,7 +88,9 @@ retail-lakehouse-pipeline/
     inventory, published CSV data type validation, partitioned CSV validation,
     partitioned Parquet schema validation, gold metric reconciliation,
     lineage graph, and deterministic
-    artifact checksums for each run.
+    artifact checksums for each run. Health warning breaches are also
+    normalized into machine-readable observed-versus-threshold records so
+    schedulers and dashboards do not need to parse warning text.
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
     pass/fail details, warning counts, row-count deltas, accepted versus
@@ -236,7 +238,9 @@ Each successful run also writes:
   rejection reason counts, bounded rejected-order samples grouped by reason,
   customer, category, and rejection metric row counts,
   quality summary with failed expectation names and bounded failed-row sample
-  metadata, generated artifact paths, runtime environment metadata for the
+  metadata, health status, warning count, machine-readable threshold breach
+  records with observed values and configured thresholds, generated artifact
+  paths, runtime environment metadata for the
   Python implementation, executable, platform, selected dependency versions,
   and scheduler environment variables, schema contracts for published
   bronze, silver, rejected-order, and gold outputs, contract validation results
@@ -272,15 +276,15 @@ Each successful run also writes:
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
   ingestion classification, quality status, per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
-  health warnings, current row counts, run-to-run deltas, accepted versus
-  rejected revenue exposure, sampled rejected orders by reason, and changed
-  artifacts from the manifest.
+  health warnings, threshold breach details, current row counts, run-to-run
+  deltas, accepted versus rejected revenue exposure, sampled rejected orders by
+  reason, and changed artifacts from the manifest.
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
   rejected-order, and gold artifacts, their row counts, descriptions, column
   names, declared data types, and available silver CSV/Parquet partitions.
 - `dashboard.html` with a self-contained visual dashboard for run health,
-  quality status, business-impact KPIs, layer row counts, source status mix,
-  rejected-order reasons, and configured run scope.
+  quality status, threshold breaches, business-impact KPIs, layer row counts,
+  source status mix, rejected-order reasons, and configured run scope.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps

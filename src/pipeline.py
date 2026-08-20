@@ -600,8 +600,12 @@ def build_run_manifest(
             "warning_thresholds": dict(warning_thresholds),
         },
         "health": {
+            "status": "warning" if health_warnings else "passed",
             "warnings": health_warnings,
             "warning_count": len(health_warnings),
+            "threshold_breaches": build_health_threshold_breaches(
+                health_warnings
+            ),
         },
         "layers": {
             "bronze": {"rows": len(bronze_rows)},
@@ -1217,6 +1221,19 @@ def build_health_warnings(
     return warnings
 
 
+def build_health_threshold_breaches(warnings):
+    return [
+        {
+            "name": warning.get("name"),
+            "severity": warning.get("severity"),
+            "observed": warning.get("observed", {}),
+            "threshold": warning.get("threshold", {}),
+        }
+        for warning in warnings
+        if isinstance(warning, dict)
+    ]
+
+
 def raise_for_failed_reconciliation(reconciliation):
     if not reconciliation["success"]:
         raise ValueError(
@@ -1584,6 +1601,16 @@ def build_dashboard_html(manifest):
         ]
         or ["<li>No health warnings recorded.</li>"]
     )
+    breach_rows = [
+        "<tr>"
+        f"<td>{_escape_html(breach.get('name'))}</td>"
+        f"<td>{_escape_html(breach.get('severity'))}</td>"
+        f"<td>{_escape_html(json.dumps(breach.get('observed', {}), sort_keys=True))}</td>"
+        f"<td>{_escape_html(json.dumps(breach.get('threshold', {}), sort_keys=True))}</td>"
+        "</tr>"
+        for breach in health.get("threshold_breaches", [])
+        if isinstance(breach, dict)
+    ]
     failed_expectation_items = (
         [f"<li>{_escape_html(expectation)}</li>" for expectation in failed_expectations]
         or ["<li>No failed expectations.</li>"]
@@ -1656,6 +1683,9 @@ def build_dashboard_html(manifest):
             "<ul>",
             *warning_items,
             "</ul>",
+            "<table><thead><tr><th>Breach</th><th>Severity</th><th>Observed</th><th>Threshold</th></tr></thead><tbody>",
+            *(breach_rows or ['<tr><td colspan="4">No threshold breaches.</td></tr>']),
+            "</tbody></table>",
             "</section>",
             '<section class="grid two-col">',
             '<div class="panel">',
@@ -2030,6 +2060,26 @@ def build_run_summary_markdown(manifest):
                 *[
                     f"- `{warning.get('name')}`: {warning.get('message')}"
                     for warning in warnings
+                ],
+            ]
+        )
+
+    threshold_breaches = health.get("threshold_breaches", [])
+    if threshold_breaches:
+        lines.extend(
+            [
+                "",
+                "## Health Threshold Breaches",
+                "",
+                "| Breach | Severity | Observed | Threshold |",
+                "| --- | --- | --- | --- |",
+                *[
+                    f"| `{breach.get('name')}` | "
+                    f"{_format_summary_value(breach.get('severity'))} | "
+                    f"`{json.dumps(breach.get('observed', {}), sort_keys=True)}` | "
+                    f"`{json.dumps(breach.get('threshold', {}), sort_keys=True)}` |"
+                    for breach in threshold_breaches
+                    if isinstance(breach, dict)
                 ],
             ]
         )

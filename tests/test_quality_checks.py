@@ -6,6 +6,7 @@ from src.pipeline import (
     artifact_sha256,
     build_artifact_inventory,
     build_health_warnings,
+    build_health_threshold_breaches,
     build_lineage,
     build_order_watermark,
     build_run_comparison,
@@ -700,6 +701,35 @@ def test_health_warnings_report_threshold_breaches():
             "observed": {"silver_rows": 1},
             "threshold": {"min_silver_rows": 2},
         },
+    ]
+
+
+def test_health_threshold_breaches_preserve_machine_readable_warning_context():
+    warnings = [
+        {
+            "name": "rejection_rate_above_threshold",
+            "severity": "warning",
+            "message": "Rejected row rate exceeded configured warning threshold",
+            "observed": {
+                "bronze_rows": 2,
+                "rejected_rows": 1,
+                "rejection_rate": 0.5,
+            },
+            "threshold": {"max_rejection_rate": 0.25},
+        }
+    ]
+
+    assert build_health_threshold_breaches(warnings) == [
+        {
+            "name": "rejection_rate_above_threshold",
+            "severity": "warning",
+            "observed": {
+                "bronze_rows": 2,
+                "rejected_rows": 1,
+                "rejection_rate": 0.5,
+            },
+            "threshold": {"max_rejection_rate": 0.25},
+        }
     ]
 
 
