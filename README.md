@@ -40,11 +40,13 @@ retail-lakehouse-pipeline/
 |-- src/
 |   |-- pipeline.py
 |   |-- quality_checks.py
+|   |-- streamlit_dashboard.py
 |   `-- sql_transforms.py
 |-- tests/
 |   |-- test_dbt_models.py
 |   |-- test_pipeline.py
 |   |-- test_quality_checks.py
+|   |-- test_streamlit_dashboard.py
 |   `-- test_sql_transforms.py
 |-- .github/workflows/ci.yml
 |-- .gitignore
@@ -102,7 +104,9 @@ retail-lakehouse-pipeline/
 13. Write a dependency-free `dashboard.html` with run health, accepted and
     rejected revenue KPIs, row-count bars, status mix, and rejection reasons
     for portfolio review or lightweight operational handoff.
-14. Optionally schedule the same CLI entrypoint through the checked-in Airflow
+14. Optionally explore the latest manifest through a Streamlit dashboard for
+   interactive portfolio demos without changing the batch pipeline contract.
+15. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
@@ -302,6 +306,27 @@ Each successful run also writes:
 - `silver_orders_by_date_parquet/order_date=<YYYY-MM-DD>/silver_orders.parquet`
   partition files for columnar analytics reads.
 
+## Streamlit Dashboard
+
+The optional Streamlit dashboard reads the same `pipeline_manifest.json` as the
+static HTML dashboard and adds an interactive view of run health, quality
+status, business-impact KPIs, layer row counts, rejection reasons, threshold
+breaches, and artifact changes.
+
+Streamlit is intentionally not required by the batch pipeline or CI test suite.
+Install it only when you want to run the interactive UI:
+
+```bash
+python -m pip install streamlit
+streamlit run src/streamlit_dashboard.py
+```
+
+To inspect a non-default run artifact:
+
+```bash
+streamlit run src/streamlit_dashboard.py -- --manifest data/processed/pipeline_manifest.json
+```
+
 The pipeline currently checks that the dataset is non-empty, the raw schema
 matches the expected order contract with no missing or unexpected named columns,
 raw CSV rows are well formed with no missing or extra fields, order IDs are
@@ -323,4 +348,4 @@ before rows are partitioned or aggregated.
 - [x] Add GitHub Actions for automated tests.
 - [x] Add run manifest for pipeline observability.
 - [x] Add lightweight dashboard artifact.
-- Add Power BI or Streamlit dashboard.
+- [x] Add Power BI or Streamlit dashboard.
