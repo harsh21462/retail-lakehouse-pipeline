@@ -132,8 +132,11 @@ non-empty strings before reading source data. Optional `order_date_start` and
 before the end. Optional `warning_thresholds` can set `max_rejection_rate`
 between 0 and 1, `min_silver_rows` as a non-negative integer, and
 `max_source_lag_days` as a non-negative integer freshness SLA against the
-latest source order date. Threshold breaches are written to the manifest as
-health warnings but do not fail the run; malformed threshold config fails fast.
+latest source order date. It can also set `max_future_order_date_days` as a
+non-negative integer tolerance for future-dated source rows, which catches
+clock, timezone, or upstream export mistakes without blocking controlled
+forward-looking loads. Threshold breaches are written to the manifest as health
+warnings but do not fail the run; malformed threshold config fails fast.
 Bad operational config fails fast instead of silently rejecting every order.
 Relative `raw_path` and
 `processed_dir` values are
@@ -154,6 +157,7 @@ Example windowed backfill config:
   "order_date_end": "2026-06-30",
   "warning_thresholds": {
     "max_rejection_rate": 0.2,
+    "max_future_order_date_days": 1,
     "max_source_lag_days": 2,
     "min_silver_rows": 1000
   }

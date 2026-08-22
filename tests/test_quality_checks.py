@@ -786,6 +786,48 @@ def test_health_warnings_do_not_report_fresh_source_data():
     assert warnings == []
 
 
+def test_health_warnings_report_future_dated_source_data():
+    warnings = build_health_warnings(
+        bronze_rows=[
+            {"order_id": "1001", "order_date": "2026-06-12"},
+            {"order_id": "1002", "order_date": "2026-06-20"},
+        ],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[],
+        warning_thresholds={"max_future_order_date_days": 2},
+        as_of_date=date(2026, 6, 15),
+    )
+
+    assert warnings == [
+        {
+            "name": "future_order_date_above_threshold",
+            "severity": "warning",
+            "message": (
+                "Latest source order date is farther in the future than "
+                "configured warning threshold"
+            ),
+            "observed": {
+                "latest_order_date": "2026-06-20",
+                "as_of_date": "2026-06-15",
+                "future_order_date_days": 5,
+            },
+            "threshold": {"max_future_order_date_days": 2},
+        }
+    ]
+
+
+def test_health_warnings_do_not_report_allowed_future_source_data():
+    warnings = build_health_warnings(
+        bronze_rows=[{"order_id": "1001", "order_date": "2026-06-16"}],
+        silver_rows=[{"order_id": "1001"}],
+        rejected_rows=[],
+        warning_thresholds={"max_future_order_date_days": 2},
+        as_of_date=date(2026, 6, 15),
+    )
+
+    assert warnings == []
+
+
 def test_manifest_profiles_handle_empty_and_populated_rows():
     raw_rows = [
         {
@@ -1246,6 +1288,16 @@ def test_load_config_validates_optional_warning_thresholds(tmp_path):
     )
 
     with pytest.raises(ValueError, match="max_source_lag_days"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '{"raw_path": "orders.csv", "processed_dir": "processed", '
+        '"included_statuses": ["delivered"], '
+        '"warning_thresholds": {"max_future_order_date_days": true}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_future_order_date_days"):
         load_config(config_path)
 
 

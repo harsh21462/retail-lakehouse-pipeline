@@ -146,6 +146,7 @@ SQL_MODEL_DEFINITIONS = [
 INGESTION_HISTORY_FILENAME = "ingestion_history.json"
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_WARNING_THRESHOLDS = {
+    "max_future_order_date_days",
     "max_rejection_rate",
     "max_source_lag_days",
     "min_silver_rows",
@@ -272,6 +273,21 @@ def load_config(path=DEFAULT_CONFIG_PATH):
             raise ValueError(
                 "Configuration key 'warning_thresholds.max_source_lag_days' "
                 "must be a non-negative integer"
+            )
+
+    if "max_future_order_date_days" in warning_thresholds:
+        max_future_order_date_days = warning_thresholds[
+            "max_future_order_date_days"
+        ]
+        if (
+            isinstance(max_future_order_date_days, bool)
+            or not isinstance(max_future_order_date_days, int)
+            or max_future_order_date_days < 0
+        ):
+            raise ValueError(
+                "Configuration key "
+                "'warning_thresholds.max_future_order_date_days' must be a "
+                "non-negative integer"
             )
 
     config["warning_thresholds"] = warning_thresholds
@@ -1215,6 +1231,32 @@ def build_health_warnings(
                             "source_lag_days": source_lag_days,
                         },
                         "threshold": {"max_source_lag_days": threshold},
+                    }
+                )
+
+    if "max_future_order_date_days" in warning_thresholds:
+        threshold = warning_thresholds["max_future_order_date_days"]
+        order_dates = sorted(row["order_date"] for row in bronze_rows)
+        if order_dates:
+            latest_order_date = datetime.strptime(order_dates[-1], "%Y-%m-%d").date()
+            future_order_date_days = (latest_order_date - as_of_date).days
+            if future_order_date_days > threshold:
+                warnings.append(
+                    {
+                        "name": "future_order_date_above_threshold",
+                        "severity": "warning",
+                        "message": (
+                            "Latest source order date is farther in the future "
+                            "than configured warning threshold"
+                        ),
+                        "observed": {
+                            "latest_order_date": latest_order_date.isoformat(),
+                            "as_of_date": as_of_date.isoformat(),
+                            "future_order_date_days": future_order_date_days,
+                        },
+                        "threshold": {
+                            "max_future_order_date_days": threshold
+                        },
                     }
                 )
 
