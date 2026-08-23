@@ -418,6 +418,18 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "RETAIL_LAKEHOUSE_PROJECT_ROOT": "/opt/retail"
             },
         },
+        "business_impact": {
+            "orders": {
+                "accepted": 8,
+                "rejected": 2,
+                "rejection_rate": 0.2,
+            },
+            "revenue": {
+                "accepted": 1200.0,
+                "rejected_potential": 300.0,
+                "realized_rate": 0.8,
+            },
+        },
         "layers": {
             "bronze": {"rows": 10},
             "rejected": {
@@ -479,6 +491,18 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "RETAIL_LAKEHOUSE_PROJECT_ROOT": "/opt/retail"
             },
         },
+        "business_impact": {
+            "orders": {
+                "accepted": 11,
+                "rejected": 1,
+                "rejection_rate": 0.083333,
+            },
+            "revenue": {
+                "accepted": 1400.5,
+                "rejected_potential": 100.0,
+                "realized_rate": 0.933333,
+            },
+        },
         "layers": {
             "bronze": {"rows": 12},
             "rejected": {
@@ -522,6 +546,34 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "previous": 2,
         "current": 1,
         "delta": -1,
+    }
+    assert comparison["business_impact_deltas"] == {
+        "orders": {
+            "accepted": {"previous": 8, "current": 11, "delta": 3},
+            "rejected": {"previous": 2, "current": 1, "delta": -1},
+            "rejection_rate": {
+                "previous": 0.2,
+                "current": 0.083333,
+                "delta": -0.116667,
+            },
+        },
+        "revenue": {
+            "accepted": {
+                "previous": 1200.0,
+                "current": 1400.5,
+                "delta": 200.5,
+            },
+            "rejected_potential": {
+                "previous": 300.0,
+                "current": 100.0,
+                "delta": -200.0,
+            },
+            "realized_rate": {
+                "previous": 0.8,
+                "current": 0.933333,
+                "delta": 0.133333,
+            },
+        },
     }
     assert comparison["source_status_count_deltas"] == {
         "cancelled": {
@@ -655,6 +707,19 @@ def test_run_comparison_tolerates_missing_runtime_environment():
             "current": "20.0.0",
             "changed": None,
         }
+    }
+
+
+def test_run_comparison_tolerates_malformed_business_impact():
+    comparison = build_run_comparison(
+        {"business_impact": {"orders": {"accepted": 8}}},
+        {"business_impact": ["not", "an", "object"]},
+    )
+
+    assert comparison["business_impact_deltas"]["orders"]["accepted"] == {
+        "previous": None,
+        "current": 8,
+        "delta": None,
     }
 
 

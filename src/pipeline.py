@@ -1019,6 +1019,33 @@ def build_run_comparison(
             return {}
         return dependencies
 
+    def business_impact(manifest):
+        impact = manifest.get("business_impact", {})
+        if not isinstance(impact, dict):
+            return {}
+        return impact
+
+    def nested_metric(manifest, section_name, metric_name):
+        section = business_impact(manifest).get(section_name, {})
+        if not isinstance(section, dict):
+            return None
+        value = section.get(metric_name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return value
+
+    def metric_delta(section_name, metric_name):
+        previous_value = nested_metric(previous_manifest, section_name, metric_name)
+        current_value = nested_metric(current_manifest, section_name, metric_name)
+        delta = None
+        if previous_value is not None and current_value is not None:
+            delta = round(current_value - previous_value, 6)
+        return {
+            "previous": previous_value,
+            "current": current_value,
+            "delta": delta,
+        }
+
     row_count_deltas = {}
     for layer_name in layer_names:
         previous_rows = layer_rows(previous_manifest, layer_name)
@@ -1152,6 +1179,24 @@ def build_run_comparison(
             for layer_name in ["source", "silver"]
         },
         "row_count_deltas": row_count_deltas,
+        "business_impact_deltas": {
+            "orders": {
+                metric_name: metric_delta("orders", metric_name)
+                for metric_name in [
+                    "accepted",
+                    "rejected",
+                    "rejection_rate",
+                ]
+            },
+            "revenue": {
+                metric_name: metric_delta("revenue", metric_name)
+                for metric_name in [
+                    "accepted",
+                    "rejected_potential",
+                    "realized_rate",
+                ]
+            },
+        },
         "source_status_count_deltas": status_count_deltas,
         "rejection_reason_deltas": rejection_reason_deltas,
         "artifact_checksum_changes": artifact_checksum_changes,
@@ -1607,7 +1652,11 @@ def build_dashboard_html(manifest):
         "failed_expectations", []
     )
     orders = business_impact.get("orders", {})
+    if not isinstance(orders, dict):
+        orders = {}
     revenue = business_impact.get("revenue", {})
+    if not isinstance(revenue, dict):
+        revenue = {}
     window = config.get("order_date_window", {})
 
     cards = [
@@ -1626,6 +1675,36 @@ def build_dashboard_html(manifest):
             "Realized revenue rate",
             _format_percent(revenue.get("realized_rate")),
         ),
+    ]
+    business_impact_deltas = comparison.get("business_impact_deltas", {})
+    if not isinstance(business_impact_deltas, dict):
+        business_impact_deltas = {}
+    order_deltas = business_impact_deltas.get("orders", {})
+    if not isinstance(order_deltas, dict):
+        order_deltas = {}
+    revenue_deltas = business_impact_deltas.get("revenue", {})
+    if not isinstance(revenue_deltas, dict):
+        revenue_deltas = {}
+    business_delta_rows = [
+        ("Accepted orders", order_deltas.get("accepted", {})),
+        ("Rejected orders", order_deltas.get("rejected", {})),
+        ("Rejection rate", order_deltas.get("rejection_rate", {})),
+        ("Accepted revenue", revenue_deltas.get("accepted", {})),
+        (
+            "Rejected potential revenue",
+            revenue_deltas.get("rejected_potential", {}),
+        ),
+        ("Realized revenue rate", revenue_deltas.get("realized_rate", {})),
+    ]
+    business_delta_table_rows = [
+        "<tr>"
+        f"<td>{_escape_html(label)}</td>"
+        f"<td>{_escape_html(details.get('previous'))}</td>"
+        f"<td>{_escape_html(details.get('current'))}</td>"
+        f"<td>{_escape_html(_format_delta(details.get('delta')))}</td>"
+        "</tr>"
+        for label, details in business_delta_rows
+        if isinstance(details, dict) and details
     ]
 
     quality_class = "status-ok" if quality.get("success") else "status-failed"
@@ -1709,6 +1788,15 @@ def build_dashboard_html(manifest):
             "<main>",
             '<section class="grid metrics">',
             *cards,
+            "</section>",
+            '<section class="panel">',
+            "<h2>Business Impact Delta</h2>",
+            "<table><thead><tr><th>Metric</th><th>Previous</th><th>Current</th><th>Delta</th></tr></thead><tbody>",
+            *(
+                business_delta_table_rows
+                or ['<tr><td colspan="4">No previous run available.</td></tr>']
+            ),
+            "</tbody></table>",
             "</section>",
             '<section class="panel">',
             "<h2>Run Health</h2>",
@@ -1994,26 +2082,45 @@ def build_run_summary_markdown(manifest):
 
     if business_impact:
         orders = business_impact.get("orders", {})
+        if not isinstance(orders, dict):
+            orders = {}
         revenue = business_impact.get("revenue", {})
+        if not isinstance(revenue, dict):
+            revenue = {}
+        business_impact_deltas = comparison.get("business_impact_deltas", {})
+        if not isinstance(business_impact_deltas, dict):
+            business_impact_deltas = {}
+        order_deltas = business_impact_deltas.get("orders", {})
+        if not isinstance(order_deltas, dict):
+            order_deltas = {}
+        revenue_deltas = business_impact_deltas.get("revenue", {})
+        if not isinstance(revenue_deltas, dict):
+            revenue_deltas = {}
         lines.extend(
             [
                 "",
                 "## Business Impact",
                 "",
-                "| Metric | Value |",
-                "| --- | ---: |",
+                "| Metric | Value | Delta |",
+                "| --- | ---: | ---: |",
                 f"| Accepted orders | "
-                f"{_format_summary_value(orders.get('accepted'))} |",
+                f"{_format_summary_value(orders.get('accepted'))} | "
+                f"{_format_delta(order_deltas.get('accepted', {}).get('delta'))} |",
                 f"| Rejected orders | "
-                f"{_format_summary_value(orders.get('rejected'))} |",
+                f"{_format_summary_value(orders.get('rejected'))} | "
+                f"{_format_delta(order_deltas.get('rejected', {}).get('delta'))} |",
                 f"| Rejection rate | "
-                f"{_format_summary_value(orders.get('rejection_rate'))} |",
+                f"{_format_summary_value(orders.get('rejection_rate'))} | "
+                f"{_format_delta(order_deltas.get('rejection_rate', {}).get('delta'))} |",
                 f"| Accepted revenue | "
-                f"{_format_summary_value(revenue.get('accepted'))} |",
+                f"{_format_summary_value(revenue.get('accepted'))} | "
+                f"{_format_delta(revenue_deltas.get('accepted', {}).get('delta'))} |",
                 f"| Rejected potential revenue | "
-                f"{_format_summary_value(revenue.get('rejected_potential'))} |",
+                f"{_format_summary_value(revenue.get('rejected_potential'))} | "
+                f"{_format_delta(revenue_deltas.get('rejected_potential', {}).get('delta'))} |",
                 f"| Realized revenue rate | "
-                f"{_format_summary_value(revenue.get('realized_rate'))} |",
+                f"{_format_summary_value(revenue.get('realized_rate'))} | "
+                f"{_format_delta(revenue_deltas.get('realized_rate', {}).get('delta'))} |",
             ]
         )
 

@@ -82,8 +82,9 @@ retail-lakehouse-pipeline/
     rejection reason counts, bounded rejected-order samples by reason,
     accepted and rejected business-impact metrics,
     non-blocking health warnings, run-to-run comparison
-    against the previous manifest, including source status-count and
-    rejection-reason deltas, partition inventory, output artifact paths,
+    against the previous manifest, including business-impact, source
+    status-count, and rejection-reason deltas, partition inventory, output
+    artifact paths,
     artifact size and checksum inventory, and a machine-readable
     runtime environment snapshot, schema contract,
     published-artifact schema contract validation, SQL model
@@ -95,15 +96,15 @@ retail-lakehouse-pipeline/
     schedulers and dashboards do not need to parse warning text.
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
-    pass/fail details, warning counts, row-count deltas, accepted versus
-    rejected revenue exposure, sampled rejected orders by reason, and changed
-    artifacts.
+    pass/fail details, warning counts, row-count and business-impact deltas,
+    accepted versus rejected revenue exposure, sampled rejected orders by
+    reason, and changed artifacts.
 12. Write a generated data catalog from the published schema contracts,
     output paths, row counts, and silver partition inventory so BI consumers
     have a versioned handoff without reverse-engineering the manifest.
 13. Write a dependency-free `dashboard.html` with run health, accepted and
-    rejected revenue KPIs, row-count bars, status mix, and rejection reasons
-    for portfolio review or lightweight operational handoff.
+    rejected revenue KPIs and deltas, row-count bars, status mix, and rejection
+    reasons for portfolio review or lightweight operational handoff.
 14. Optionally explore the latest manifest through a Streamlit dashboard for
    interactive portfolio demos without changing the batch pipeline contract.
 15. Optionally schedule the same CLI entrypoint through the checked-in Airflow
@@ -267,8 +268,9 @@ Each successful run also writes:
   sorted relative file paths and file contents so partitioned outputs can be
   compared across runs. The run comparison also records whether source and
   silver high-watermarks changed since the previous manifest, plus raw source
-  status-count deltas so changes in order status mix are visible before they
-  flow into rejection metrics. The manifest also includes a versioned inventory of
+  status-count deltas and business-impact deltas so changes in order status
+  mix and revenue exposure are visible before they flow into rejection metrics.
+  The manifest also includes a versioned inventory of
   executable SQL gold models with model paths, SHA-256 checksums, input tables,
   output artifacts, and output-column contracts. The manifest also includes a
   versioned lineage graph linking the raw source, quality report,
@@ -280,19 +282,23 @@ Each successful run also writes:
   existence/checksum changes, plus runtime-environment and dependency-version
   drift;
   if a prior manifest is missing or malformed, the comparison records the
-  reason instead of fabricating deltas.
+  reason instead of fabricating deltas. Business-impact deltas cover accepted
+  and rejected orders, rejection rate, accepted revenue, rejected potential
+  revenue, and realized revenue rate.
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
   ingestion classification, quality status, per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, threshold breach details, current row counts, run-to-run
-  deltas, accepted versus rejected revenue exposure, sampled rejected orders by
-  reason, and changed artifacts from the manifest.
+  row-count and business-impact deltas, accepted versus rejected revenue
+  exposure, sampled rejected orders by reason, and changed artifacts from the
+  manifest.
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
   rejected-order, and gold artifacts, their row counts, descriptions, column
   names, declared data types, and available silver CSV/Parquet partitions.
 - `dashboard.html` with a self-contained visual dashboard for run health,
-  quality status, threshold breaches, business-impact KPIs, layer row counts,
-  source status mix, rejected-order reasons, and configured run scope.
+  quality status, threshold breaches, business-impact KPIs and deltas, layer
+  row counts, source status mix, rejected-order reasons, and configured run
+  scope.
 - `ingestion_history.json` with every successfully processed source checksum,
   first/last seen timestamps, run count, row count, and known source paths.
   Failed quality or reconciliation runs do not update this history, which keeps
@@ -314,8 +320,8 @@ Each successful run also writes:
 
 The optional Streamlit dashboard reads the same `pipeline_manifest.json` as the
 static HTML dashboard and adds an interactive view of run health, quality
-status, business-impact KPIs, layer row counts, rejection reasons, threshold
-breaches, and artifact changes.
+status, business-impact KPIs and deltas, layer row counts, rejection reasons,
+threshold breaches, and artifact changes.
 
 Streamlit is intentionally not required by the batch pipeline or CI test suite.
 Install it only when you want to run the interactive UI:

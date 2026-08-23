@@ -450,6 +450,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     dashboard = (processed_dir / "dashboard.html").read_text(encoding="utf-8")
     assert "<title>Retail Lakehouse Dashboard</title>" in dashboard
     assert "Accepted orders" in dashboard
+    assert "Business Impact Delta" in dashboard
     assert "Rejected potential revenue" in dashboard
     assert "status_not_included" in dashboard
     assert f"{raw_path}" in dashboard
@@ -1790,6 +1791,18 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                     "bronze": {"delta": 2},
                     "silver": {"delta": -1},
                 },
+                "business_impact_deltas": {
+                    "orders": {
+                        "accepted": {"delta": -1},
+                        "rejected": {"delta": 2},
+                        "rejection_rate": {"delta": 0.1},
+                    },
+                    "revenue": {
+                        "accepted": {"delta": -100.0},
+                        "rejected_potential": {"delta": 75.0},
+                        "realized_rate": {"delta": -0.05},
+                    },
+                },
                 "artifact_checksum_changes": {
                     "silver_orders": {"sha256_changed": True},
                     "gold_revenue_metrics": {"sha256_changed": False},
@@ -1807,8 +1820,10 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "| bronze | 10 | +2 |" in summary
     assert "| silver | 8 | -1 |" in summary
     assert "## Business Impact" in summary
-    assert "| Rejection rate | 0.2 |" in summary
-    assert "| Realized revenue rate | 0.8 |" in summary
+    assert "| Accepted orders | 8 | -1 |" in summary
+    assert "| Rejection rate | 0.2 | +0.1 |" in summary
+    assert "| Accepted revenue | 1200.0 | -100.0 |" in summary
+    assert "| Realized revenue rate | 0.8 | -0.05 |" in summary
     assert "## Rejected Order Samples" in summary
     assert "- Showing 1 sampled rejected rows; 1 omitted by per-reason caps." in summary
     assert (

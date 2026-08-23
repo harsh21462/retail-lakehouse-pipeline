@@ -4,6 +4,7 @@ import pytest
 
 from src.streamlit_dashboard import (
     build_artifact_change_rows,
+    build_business_impact_delta_rows,
     build_kpi_cards,
     build_layer_rows,
     build_rejection_reason_rows,
@@ -79,6 +80,34 @@ def test_dashboard_helpers_shape_manifest_for_streamlit_widgets():
             "gold": {"rows": 3},
         },
         "run_comparison": {
+            "business_impact_deltas": {
+                "orders": {
+                    "accepted": {"previous": 7, "current": 8, "delta": 1},
+                    "rejected": {"previous": 3, "current": 2, "delta": -1},
+                    "rejection_rate": {
+                        "previous": 0.3,
+                        "current": 0.2,
+                        "delta": -0.1,
+                    },
+                },
+                "revenue": {
+                    "accepted": {
+                        "previous": 1000.0,
+                        "current": 1200.0,
+                        "delta": 200.0,
+                    },
+                    "rejected_potential": {
+                        "previous": 500.0,
+                        "current": 300.0,
+                        "delta": -200.0,
+                    },
+                    "realized_rate": {
+                        "previous": 0.666667,
+                        "current": 0.8,
+                        "delta": 0.133333,
+                    },
+                },
+            },
             "artifact_checksum_changes": {
                 "silver_orders": {
                     "previous_exists": True,
@@ -128,3 +157,44 @@ def test_dashboard_helpers_shape_manifest_for_streamlit_widgets():
             "checksum_changed": True,
         }
     ]
+    assert build_business_impact_delta_rows(manifest) == [
+        {
+            "metric": "Accepted orders",
+            "previous": 7,
+            "current": 8,
+            "delta": 1,
+        },
+        {
+            "metric": "Rejected orders",
+            "previous": 3,
+            "current": 2,
+            "delta": -1,
+        },
+        {
+            "metric": "Rejection rate",
+            "previous": 0.3,
+            "current": 0.2,
+            "delta": -0.1,
+        },
+        {
+            "metric": "Accepted revenue",
+            "previous": 1000.0,
+            "current": 1200.0,
+            "delta": 200.0,
+        },
+        {
+            "metric": "Rejected potential revenue",
+            "previous": 500.0,
+            "current": 300.0,
+            "delta": -200.0,
+        },
+        {
+            "metric": "Realized revenue rate",
+            "previous": 0.666667,
+            "current": 0.8,
+            "delta": 0.133333,
+        },
+    ]
+    assert build_business_impact_delta_rows(
+        {"run_comparison": {"business_impact_deltas": ["not", "an", "object"]}}
+    ) == []

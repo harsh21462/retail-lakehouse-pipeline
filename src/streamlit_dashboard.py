@@ -36,8 +36,14 @@ def format_percent(value):
 
 def build_kpi_cards(manifest):
     business_impact = manifest.get("business_impact", {})
+    if not isinstance(business_impact, dict):
+        business_impact = {}
     orders = business_impact.get("orders", {})
+    if not isinstance(orders, dict):
+        orders = {}
     revenue = business_impact.get("revenue", {})
+    if not isinstance(revenue, dict):
+        revenue = {}
     health = manifest.get("health", {})
     quality = manifest.get("quality", {})
 
@@ -127,6 +133,37 @@ def build_artifact_change_rows(manifest):
     ]
 
 
+def build_business_impact_delta_rows(manifest):
+    deltas = manifest.get("run_comparison", {}).get("business_impact_deltas", {})
+    if not isinstance(deltas, dict):
+        return []
+    metric_groups = [
+        ("orders", "accepted", "Accepted orders"),
+        ("orders", "rejected", "Rejected orders"),
+        ("orders", "rejection_rate", "Rejection rate"),
+        ("revenue", "accepted", "Accepted revenue"),
+        ("revenue", "rejected_potential", "Rejected potential revenue"),
+        ("revenue", "realized_rate", "Realized revenue rate"),
+    ]
+    rows = []
+    for group_name, metric_name, label in metric_groups:
+        group = deltas.get(group_name, {})
+        if not isinstance(group, dict):
+            continue
+        details = group.get(metric_name, {})
+        if not isinstance(details, dict) or not details:
+            continue
+        rows.append(
+            {
+                "metric": label,
+                "previous": details.get("previous"),
+                "current": details.get("current"),
+                "delta": details.get("delta"),
+            }
+        )
+    return rows
+
+
 def render_dashboard(manifest, streamlit_module):
     st = streamlit_module
     run = manifest.get("run", {})
@@ -151,6 +188,15 @@ def render_dashboard(manifest, streamlit_module):
             "order_date_window": config.get("order_date_window", {}),
         }
     )
+
+    business_impact_delta_rows = build_business_impact_delta_rows(manifest)
+    if business_impact_delta_rows:
+        st.subheader("Business Impact Delta")
+        st.dataframe(
+            business_impact_delta_rows,
+            hide_index=True,
+            use_container_width=True,
+        )
 
     st.subheader("Layer Row Counts")
     st.bar_chart(build_layer_rows(manifest), x="layer", y="rows")
