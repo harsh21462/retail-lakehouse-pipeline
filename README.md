@@ -40,12 +40,14 @@ retail-lakehouse-pipeline/
 |-- src/
 |   |-- pipeline.py
 |   |-- quality_checks.py
+|   |-- spark_pipeline.py
 |   |-- streamlit_dashboard.py
 |   `-- sql_transforms.py
 |-- tests/
 |   |-- test_dbt_models.py
 |   |-- test_pipeline.py
 |   |-- test_quality_checks.py
+|   |-- test_spark_pipeline.py
 |   |-- test_streamlit_dashboard.py
 |   `-- test_sql_transforms.py
 |-- .github/workflows/ci.yml
@@ -109,6 +111,11 @@ retail-lakehouse-pipeline/
    interactive portfolio demos without changing the batch pipeline contract.
 15. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
+16. Optionally run the Spark silver-layer adapter in `src/spark_pipeline.py`
+   when PySpark is installed. It uses the same config, status scope, date
+   window semantics, silver columns, rejected-order columns, and rejection
+   reasons as the Python pipeline, but writes Spark-managed Parquet outputs
+   under `spark_silver_orders/` and `spark_rejected_orders/`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -220,6 +227,22 @@ runtime. In an Airflow deployment, set `RETAIL_LAKEHOUSE_PROJECT_ROOT` if the
 repository is mounted somewhere other than the DAG file's parent project
 directory, and set `RETAIL_LAKEHOUSE_PYTHON_BIN` if the scheduler should use a
 specific virtualenv interpreter.
+
+## PySpark Silver Adapter
+
+`src/spark_pipeline.py` provides an optional Spark implementation for the
+silver and rejected-order transform boundary:
+
+```bash
+python -m pip install pyspark
+python src/spark_pipeline.py
+```
+
+PySpark is intentionally not part of `requirements-dev.txt` because it brings a
+JVM/runtime dependency that is unnecessary for the default local and CI checks.
+The adapter fails with an explicit error when PySpark is missing, and the unit
+tests validate the generated Spark predicates, status/date-window handling, and
+published column contracts without requiring a Spark runtime.
 
 Output files are written to:
 
@@ -347,7 +370,8 @@ before rows are partitioned or aggregated.
 
 ## Roadmap
 
-- Add PySpark version of the pipeline.
+- [x] Add PySpark silver-layer adapter.
+- Add full PySpark orchestration for gold models and manifest parity.
 - [x] Add partitioned output.
 - [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.
