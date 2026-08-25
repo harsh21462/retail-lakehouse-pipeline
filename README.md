@@ -114,8 +114,9 @@ retail-lakehouse-pipeline/
 16. Optionally run the Spark silver-layer adapter in `src/spark_pipeline.py`
    when PySpark is installed. It uses the same config, status scope, date
    window semantics, silver columns, rejected-order columns, and rejection
-   reasons as the Python pipeline, but writes Spark-managed Parquet outputs
-   under `spark_silver_orders/` and `spark_rejected_orders/`.
+   reasons as the Python pipeline, reconciles raw rows against Spark silver
+   plus rejected rows before overwriting outputs, and writes Spark-managed
+   Parquet outputs under `spark_silver_orders/` and `spark_rejected_orders/`.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -242,7 +243,10 @@ PySpark is intentionally not part of `requirements-dev.txt` because it brings a
 JVM/runtime dependency that is unnecessary for the default local and CI checks.
 The adapter fails with an explicit error when PySpark is missing, and the unit
 tests validate the generated Spark predicates, status/date-window handling, and
-published column contracts without requiring a Spark runtime.
+published column contracts without requiring a Spark runtime. Before publishing
+Spark-managed Parquet outputs, it also checks that the raw row count equals
+accepted plus rejected rows and fails the run if Spark did not account for every
+input row.
 
 Output files are written to:
 

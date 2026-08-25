@@ -1,10 +1,18 @@
 from pathlib import Path
 
 try:
-    from .pipeline import load_config, resolve_pipeline_path
+    from .pipeline import (
+        load_config,
+        raise_for_failed_reconciliation,
+        resolve_pipeline_path,
+    )
     from .quality_checks import REQUIRED_COLUMNS
 except ImportError:  # Support direct execution with `python src/spark_pipeline.py`.
-    from pipeline import load_config, resolve_pipeline_path
+    from pipeline import (
+        load_config,
+        raise_for_failed_reconciliation,
+        resolve_pipeline_path,
+    )
     from quality_checks import REQUIRED_COLUMNS
 
 
@@ -122,6 +130,21 @@ def build_silver_and_rejected_dataframes(
     return silver_df, rejected_df
 
 
+def build_spark_row_count_reconciliation(raw_orders_df, silver_df, rejected_df):
+    bronze_count = raw_orders_df.count()
+    silver_count = silver_df.count()
+    rejected_count = rejected_df.count()
+    accounted_count = silver_count + rejected_count
+    return {
+        "success": bronze_count == accounted_count,
+        "bronze_rows": bronze_count,
+        "silver_rows": silver_count,
+        "rejected_rows": rejected_count,
+        "accounted_rows": accounted_count,
+        "difference": bronze_count - accounted_count,
+    }
+
+
 def run_spark_silver_pipeline(config_path):
     config_path = Path(config_path)
     config = load_config(config_path)
@@ -137,6 +160,12 @@ def run_spark_silver_pipeline(config_path):
         order_date_start=config.get("order_date_start"),
         order_date_end=config.get("order_date_end"),
     )
+    reconciliation = build_spark_row_count_reconciliation(
+        raw_orders_df,
+        silver_df,
+        rejected_df,
+    )
+    raise_for_failed_reconciliation(reconciliation)
     silver_df.write.mode("overwrite").parquet(str(processed_dir / "spark_silver_orders"))
     rejected_df.write.mode("overwrite").parquet(
         str(processed_dir / "spark_rejected_orders")
@@ -144,6 +173,7 @@ def run_spark_silver_pipeline(config_path):
     return {
         "silver_path": str(processed_dir / "spark_silver_orders"),
         "rejected_path": str(processed_dir / "spark_rejected_orders"),
+        "reconciliation": reconciliation,
     }
 
 
