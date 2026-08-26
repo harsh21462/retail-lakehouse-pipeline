@@ -1957,6 +1957,19 @@ def _format_delta(delta):
     return str(delta)
 
 
+def _format_watermark(watermark):
+    if not isinstance(watermark, dict):
+        return "n/a"
+    order_date = watermark.get("order_date")
+    order_id = watermark.get("order_id")
+    if order_date is None and order_id is None:
+        return "n/a"
+    return (
+        f"{_format_summary_value(order_date)} "
+        f"(`{_format_summary_value(order_id)}`)"
+    )
+
+
 def _format_quality_expectation_rows(expectations):
     rows = []
     for expectation in expectations:
@@ -2078,6 +2091,38 @@ def build_run_summary_markdown(manifest):
             lines.append(
                 f"| {layer_name} | {_format_summary_value(current_rows)} | "
                 f"{_format_delta(delta)} |"
+            )
+
+    source_profile = source.get("profile", {})
+    if not isinstance(source_profile, dict):
+        source_profile = {}
+    silver_profile = layers.get("silver", {}).get("profile", {})
+    if not isinstance(silver_profile, dict):
+        silver_profile = {}
+    watermark_changes = comparison.get("high_watermarks", {})
+    if not isinstance(watermark_changes, dict):
+        watermark_changes = {}
+    if source or "silver" in layers or watermark_changes:
+        lines.extend(
+            [
+                "",
+                "## High Watermarks",
+                "",
+                "| Dataset | Current high watermark | Changed |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for dataset_name, profile in [
+            ("source", source_profile),
+            ("silver", silver_profile),
+        ]:
+            change = watermark_changes.get(dataset_name, {})
+            if not isinstance(change, dict):
+                change = {}
+            lines.append(
+                f"| {dataset_name} | "
+                f"{_format_watermark(profile.get('high_watermark'))} | "
+                f"{_format_summary_value(change.get('changed'))} |"
             )
 
     if business_impact:

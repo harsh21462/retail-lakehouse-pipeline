@@ -421,6 +421,9 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert "- Quality: passed" in run_summary
     assert "- Runtime environment changed: n/a" in run_summary
     assert "## Quality Expectations" in run_summary
+    assert "## High Watermarks" in run_summary
+    assert "| source | 2026-06-02 (`1003`) | n/a |" in run_summary
+    assert "| silver | 2026-06-02 (`1003`) | n/a |" in run_summary
     assert "## Business Impact" in run_summary
     assert "## Rejected Order Samples" in run_summary
     assert (
@@ -1690,6 +1693,12 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
             "source": {
                 "path": "/data/raw/orders.csv",
                 "ingestion": {"classification": "new_source_file"},
+                "profile": {
+                    "high_watermark": {
+                        "order_date": "2026-07-30",
+                        "order_id": "1012",
+                    }
+                },
             },
             "quality": {
                 "success": False,
@@ -1771,7 +1780,15 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                         },
                     },
                 },
-                "silver": {"rows": 8},
+                "silver": {
+                    "rows": 8,
+                    "profile": {
+                        "high_watermark": {
+                            "order_date": "2026-07-29",
+                            "order_id": "1010",
+                        }
+                    },
+                },
             },
             "business_impact": {
                 "orders": {
@@ -1807,6 +1824,10 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
                     "silver_orders": {"sha256_changed": True},
                     "gold_revenue_metrics": {"sha256_changed": False},
                 },
+                "high_watermarks": {
+                    "source": {"changed": True},
+                    "silver": {"changed": False},
+                },
             },
         }
     )
@@ -1819,6 +1840,9 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     ) in summary
     assert "| bronze | 10 | +2 |" in summary
     assert "| silver | 8 | -1 |" in summary
+    assert "## High Watermarks" in summary
+    assert "| source | 2026-07-30 (`1012`) | True |" in summary
+    assert "| silver | 2026-07-29 (`1010`) | False |" in summary
     assert "## Business Impact" in summary
     assert "| Accepted orders | 8 | -1 |" in summary
     assert "| Rejection rate | 0.2 | +0.1 |" in summary
@@ -1841,6 +1865,26 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
         '`{"min_silver_rows": 10}` |'
     ) in summary
     assert "- `silver_orders`" in summary
+
+
+def test_run_summary_markdown_tolerates_missing_watermark_profiles():
+    summary = build_run_summary_markdown(
+        {
+            "run": {"completed_at_utc": "2026-08-20T01:00:00Z"},
+            "source": {
+                "path": "/data/raw/orders.csv",
+                "ingestion": {"classification": "quality_failed"},
+                "profile": "not-an-object",
+            },
+            "quality": {"success": False, "summary": {"failed_expectations": []}},
+            "layers": {"silver": {"rows": 0, "profile": {}}},
+            "run_comparison": {"high_watermarks": "not-an-object"},
+        }
+    )
+
+    assert "## High Watermarks" in summary
+    assert "| source | n/a | n/a |" in summary
+    assert "| silver | n/a | n/a |" in summary
 
 
 def test_data_catalog_markdown_describes_contracts_and_partitions(tmp_path):

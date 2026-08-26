@@ -99,8 +99,8 @@ retail-lakehouse-pipeline/
 11. Write a Markdown run summary derived from the manifest for quick
     operational review of source ingestion status, quality expectation
     pass/fail details, warning counts, row-count and business-impact deltas,
-    accepted versus rejected revenue exposure, sampled rejected orders by
-    reason, and changed artifacts.
+    source and silver high-watermarks, accepted versus rejected revenue
+    exposure, sampled rejected orders by reason, and changed artifacts.
 12. Write a generated data catalog from the published schema contracts,
     output paths, row counts, and silver partition inventory so BI consumers
     have a versioned handoff without reverse-engineering the manifest.
@@ -316,9 +316,9 @@ Each successful run also writes:
   ingestion classification, quality status, per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, threshold breach details, current row counts, run-to-run
-  row-count and business-impact deltas, accepted versus rejected revenue
-  exposure, sampled rejected orders by reason, and changed artifacts from the
-  manifest.
+  row-count and business-impact deltas, source and silver high-watermarks,
+  accepted versus rejected revenue exposure, sampled rejected orders by reason,
+  and changed artifacts from the manifest.
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,
   rejected-order, and gold artifacts, their row counts, descriptions, column
   names, declared data types, and available silver CSV/Parquet partitions.
