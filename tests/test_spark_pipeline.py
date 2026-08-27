@@ -74,9 +74,13 @@ class FakeSparkReader:
 class FakeSparkSession:
     reader = None
     app_name = None
+    stop_count = 0
 
     def __init__(self):
         self.read = self.reader
+
+    def stop(self):
+        type(self).stop_count += 1
 
 
 class FakeSparkSessionBuilder:
@@ -202,6 +206,7 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     rejected_df = FakeWritableDataFrame(1, written_paths)
     FakeSparkSession.reader = FakeSparkReader(raw_df)
     FakeSparkSession.app_name = None
+    FakeSparkSession.stop_count = 0
 
     monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
     monkeypatch.setattr(
@@ -218,6 +223,7 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert result == {
         "silver_path": str(processed_dir / "spark_silver_orders"),
         "rejected_path": str(processed_dir / "spark_rejected_orders"),
+        "manifest_path": str(processed_dir / "spark_pipeline_manifest.json"),
         "reconciliation": {
             "success": True,
             "bronze_rows": 3,
@@ -231,6 +237,43 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         ("overwrite", str(processed_dir / "spark_silver_orders")),
         ("overwrite", str(processed_dir / "spark_rejected_orders")),
     ]
+    assert FakeSparkSession.stop_count == 1
+
+    manifest = json.loads(
+        (processed_dir / "spark_pipeline_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["version"] == 1
+    assert manifest["engine"] == "spark"
+    assert manifest["run"]["config_path"] == str(config_path.resolve())
+    assert manifest["run"]["raw_path"] == str(raw_path)
+    assert manifest["run"]["processed_dir"] == str(processed_dir)
+    assert manifest["run"]["started_at_utc"].endswith("Z")
+    assert manifest["run"]["completed_at_utc"].endswith("Z")
+    assert manifest["run"]["duration_ms"] >= 0
+    assert manifest["runtime_environment"]["version"] == 1
+    assert manifest["source"]["path"] == str(raw_path)
+    assert manifest["source"]["rows"] == 3
+    assert manifest["config"] == {
+        "included_statuses": ["delivered"],
+        "order_date_window": {"start": None, "end": None},
+    }
+    assert manifest["outputs"] == {
+        "silver_orders": {
+            "path": str(processed_dir / "spark_silver_orders"),
+            "format": "parquet",
+            "columns": spark_pipeline.SILVER_COLUMNS,
+            "rows": 2,
+        },
+        "rejected_orders": {
+            "path": str(processed_dir / "spark_rejected_orders"),
+            "format": "parquet",
+            "columns": spark_pipeline.REJECTED_COLUMNS,
+            "rows": 1,
+        },
+    }
+    assert manifest["reconciliation"] == result["reconciliation"]
 
 
 def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
@@ -259,6 +302,7 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
     silver_df = FakeWritableDataFrame(1, written_paths)
     rejected_df = FakeWritableDataFrame(1, written_paths)
     FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
 
     monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
     monkeypatch.setattr(
@@ -271,6 +315,8 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
         spark_pipeline.run_spark_silver_pipeline(config_path)
 
     assert written_paths == []
+    assert FakeSparkSession.stop_count == 1
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
 
 
 def test_spark_pipeline_reports_missing_optional_dependency(monkeypatch):

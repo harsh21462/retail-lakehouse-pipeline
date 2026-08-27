@@ -117,6 +117,9 @@ retail-lakehouse-pipeline/
    reasons as the Python pipeline, reconciles raw rows against Spark silver
    plus rejected rows before overwriting outputs, and writes Spark-managed
    Parquet outputs under `spark_silver_orders/` and `spark_rejected_orders/`.
+   Each successful Spark run also writes a `spark_pipeline_manifest.json`
+   with run timing, source/config checksums, resolved output paths, runtime
+   environment details, row counts, and the Spark reconciliation result.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -246,7 +249,9 @@ tests validate the generated Spark predicates, status/date-window handling, and
 published column contracts without requiring a Spark runtime. Before publishing
 Spark-managed Parquet outputs, it also checks that the raw row count equals
 accepted plus rejected rows and fails the run if Spark did not account for every
-input row.
+input row. Successful Spark runs emit `spark_pipeline_manifest.json` next to the
+Spark Parquet outputs, and the Spark session is stopped in a `finally` block so
+failed reconciliations do not leak a live session in scheduled environments.
 
 Output files are written to:
 
