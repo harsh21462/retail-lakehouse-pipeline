@@ -156,6 +156,51 @@ def build_spark_row_count_reconciliation(raw_orders_df, silver_df, rejected_df):
     }
 
 
+def build_spark_output_contract_validation(outputs):
+    validations = {}
+    for artifact_name, payload in outputs.items():
+        expected_columns = list(payload["expected_columns"])
+        actual_columns = list(payload["dataframe"].columns)
+        missing_columns = [
+            column for column in expected_columns if column not in actual_columns
+        ]
+        unexpected_columns = [
+            column for column in actual_columns if column not in expected_columns
+        ]
+        validations[artifact_name] = {
+            "success": (
+                actual_columns == expected_columns
+                and not missing_columns
+                and not unexpected_columns
+            ),
+            "expected_columns": expected_columns,
+            "actual_columns": actual_columns,
+            "missing_columns": missing_columns,
+            "unexpected_columns": unexpected_columns,
+            "order_matches": actual_columns == expected_columns,
+        }
+
+    failed_outputs = [
+        artifact_name
+        for artifact_name, validation in validations.items()
+        if not validation["success"]
+    ]
+    return {
+        "version": 1,
+        "success": not failed_outputs,
+        "failed_outputs": failed_outputs,
+        "outputs": validations,
+    }
+
+
+def raise_for_failed_spark_output_contract_validation(validation):
+    if not validation["success"]:
+        raise ValueError(
+            "Spark output contract validation failed: "
+            f"{', '.join(validation['failed_outputs'])}"
+        )
+
+
 def build_spark_manifest(
     *,
     config_path,
@@ -166,6 +211,7 @@ def build_spark_manifest(
     completed_at_utc,
     duration_ms,
     reconciliation,
+    output_contract_validation,
 ):
     return {
         "version": 1,
@@ -207,6 +253,7 @@ def build_spark_manifest(
             },
         },
         "reconciliation": reconciliation,
+        "schema_contract_validation": output_contract_validation,
     }
 
 
@@ -234,6 +281,21 @@ def run_spark_silver_pipeline(config_path):
             rejected_df,
         )
         raise_for_failed_reconciliation(reconciliation)
+        output_contract_validation = build_spark_output_contract_validation(
+            {
+                "silver_orders": {
+                    "dataframe": silver_df,
+                    "expected_columns": SILVER_COLUMNS,
+                },
+                "rejected_orders": {
+                    "dataframe": rejected_df,
+                    "expected_columns": REJECTED_COLUMNS,
+                },
+            }
+        )
+        raise_for_failed_spark_output_contract_validation(
+            output_contract_validation
+        )
         silver_path = processed_dir / "spark_silver_orders"
         rejected_path = processed_dir / "spark_rejected_orders"
         silver_df.write.mode("overwrite").parquet(str(silver_path))
@@ -250,6 +312,7 @@ def run_spark_silver_pipeline(config_path):
             completed_at_utc=completed_at_utc,
             duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),
             reconciliation=reconciliation,
+            output_contract_validation=output_contract_validation,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         write_json(manifest_path, manifest)

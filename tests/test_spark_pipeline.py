@@ -13,9 +13,10 @@ class FakeFunctions:
 
 
 class FakeDataFrame:
-    def __init__(self, calls=None, count_value=0):
+    def __init__(self, calls=None, count_value=0, columns=None):
         self.calls = calls or []
         self.count_value = count_value
+        self.columns = columns or []
 
     def where(self, expression):
         return FakeDataFrame([*self.calls, ("where", expression)], self.count_value)
@@ -52,8 +53,8 @@ class FakeDataFrameWriter:
 
 
 class FakeWritableDataFrame(FakeDataFrame):
-    def __init__(self, count_value, written_paths):
-        super().__init__(count_value=count_value)
+    def __init__(self, count_value, written_paths, columns=None):
+        super().__init__(count_value=count_value, columns=columns)
         self.write = FakeDataFrameWriter(written_paths)
 
 
@@ -181,6 +182,43 @@ def test_spark_row_count_reconciliation_reports_accounted_rows():
     }
 
 
+def test_spark_output_contract_validation_detects_column_drift():
+    validation = spark_pipeline.build_spark_output_contract_validation(
+        {
+            "silver_orders": {
+                "dataframe": FakeDataFrame(
+                    columns=[
+                        "order_id",
+                        "customer_id",
+                        "order_date",
+                        "category",
+                        "product",
+                        "quantity",
+                        "revenue",
+                    ],
+                ),
+                "expected_columns": spark_pipeline.SILVER_COLUMNS,
+            },
+            "rejected_orders": {
+                "dataframe": FakeDataFrame(columns=spark_pipeline.REJECTED_COLUMNS),
+                "expected_columns": spark_pipeline.REJECTED_COLUMNS,
+            },
+        }
+    )
+
+    assert validation["success"] is False
+    assert validation["failed_outputs"] == ["silver_orders"]
+    assert validation["outputs"]["silver_orders"]["missing_columns"] == [
+        "unit_price"
+    ]
+    assert validation["outputs"]["silver_orders"]["order_matches"] is False
+    with pytest.raises(
+        ValueError,
+        match="Spark output contract validation failed: silver_orders",
+    ):
+        spark_pipeline.raise_for_failed_spark_output_contract_validation(validation)
+
+
 def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     raw_path = tmp_path / "raw" / "orders.csv"
     processed_dir = tmp_path / "processed"
@@ -202,8 +240,16 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     )
     written_paths = []
     raw_df = FakeDataFrame(count_value=3)
-    silver_df = FakeWritableDataFrame(2, written_paths)
-    rejected_df = FakeWritableDataFrame(1, written_paths)
+    silver_df = FakeWritableDataFrame(
+        2,
+        written_paths,
+        columns=spark_pipeline.SILVER_COLUMNS,
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+    )
     FakeSparkSession.reader = FakeSparkReader(raw_df)
     FakeSparkSession.app_name = None
     FakeSparkSession.stop_count = 0
@@ -274,6 +320,29 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         },
     }
     assert manifest["reconciliation"] == result["reconciliation"]
+    assert manifest["schema_contract_validation"] == {
+        "version": 1,
+        "success": True,
+        "failed_outputs": [],
+        "outputs": {
+            "silver_orders": {
+                "success": True,
+                "expected_columns": spark_pipeline.SILVER_COLUMNS,
+                "actual_columns": spark_pipeline.SILVER_COLUMNS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
+            "rejected_orders": {
+                "success": True,
+                "expected_columns": spark_pipeline.REJECTED_COLUMNS,
+                "actual_columns": spark_pipeline.REJECTED_COLUMNS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
+        },
+    }
 
 
 def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
@@ -299,8 +368,16 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
     )
     written_paths = []
     raw_df = FakeDataFrame(count_value=3)
-    silver_df = FakeWritableDataFrame(1, written_paths)
-    rejected_df = FakeWritableDataFrame(1, written_paths)
+    silver_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.SILVER_COLUMNS,
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+    )
     FakeSparkSession.reader = FakeSparkReader(raw_df)
     FakeSparkSession.stop_count = 0
 
@@ -312,6 +389,68 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
     )
 
     with pytest.raises(ValueError, match="Row count reconciliation failed"):
+        spark_pipeline.run_spark_silver_pipeline(config_path)
+
+    assert written_paths == []
+    assert FakeSparkSession.stop_count == 1
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+
+
+def test_spark_pipeline_fails_before_writing_when_output_contract_drifts(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "pipeline.json"
+    raw_path = tmp_path / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    written_paths = []
+    raw_df = FakeDataFrame(count_value=3)
+    silver_df = FakeWritableDataFrame(
+        2,
+        written_paths,
+        columns=[
+            "order_id",
+            "customer_id",
+            "order_date",
+            "category",
+            "product",
+            "quantity",
+            "revenue",
+        ],
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+    )
+    FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
+
+    monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
+    monkeypatch.setattr(
+        spark_pipeline,
+        "build_silver_and_rejected_dataframes",
+        lambda *args, **kwargs: (silver_df, rejected_df),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Spark output contract validation failed: silver_orders",
+    ):
         spark_pipeline.run_spark_silver_pipeline(config_path)
 
     assert written_paths == []
