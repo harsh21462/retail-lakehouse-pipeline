@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import sys
 
 import pytest
@@ -50,6 +51,12 @@ class FakeDataFrameWriter:
 
     def parquet(self, path):
         self.written_paths.append((self.mode_value, path))
+        output_dir = Path(path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "part-00000.parquet").write_text(
+            f"{output_dir.name}\n",
+            encoding="utf-8",
+        )
 
 
 class FakeWritableDataFrame(FakeDataFrame):
@@ -319,6 +326,14 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
             "rows": 1,
         },
     }
+    assert set(manifest["output_inventory"]) == {"silver_orders", "rejected_orders"}
+    for artifact_name, artifact_stats in manifest["output_inventory"].items():
+        assert artifact_stats["path"] == manifest["outputs"][artifact_name]["path"]
+        assert artifact_stats["exists"] is True
+        assert artifact_stats["type"] == "directory"
+        assert artifact_stats["files"] == 1
+        assert artifact_stats["bytes"] > 0
+        assert artifact_stats["sha256"]
     assert manifest["reconciliation"] == result["reconciliation"]
     assert manifest["schema_contract_validation"] == {
         "version": 1,

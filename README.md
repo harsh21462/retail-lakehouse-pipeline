@@ -122,7 +122,9 @@ retail-lakehouse-pipeline/
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
    environment details, row counts, the Spark reconciliation result, and the
-   Spark output schema-contract validation result.
+   Spark output schema-contract validation result. The Spark manifest also
+   records an output inventory with file counts, byte sizes, and deterministic
+   SHA-256 checksums for the emitted Parquet directories.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -255,9 +257,12 @@ accepted plus rejected rows and fails the run if Spark did not account for every
 input row. Successful Spark runs emit `spark_pipeline_manifest.json` next to the
 Spark Parquet outputs. Before those outputs are overwritten, the adapter
 validates that the silver and rejected-order DataFrame columns still match the
-published contracts and records the validation in the manifest. The Spark
-session is stopped in a `finally` block so failed reconciliations or contract
-checks do not leak a live session in scheduled environments.
+published contracts and records the validation in the manifest. After both
+outputs are written, the manifest records file counts, byte sizes, and
+deterministic SHA-256 checksums for the Spark Parquet directories so scheduled
+runs can detect missing or changed output artifacts. The Spark session is
+stopped in a `finally` block so failed reconciliations or contract checks do
+not leak a live session in scheduled environments.
 
 Output files are written to:
 

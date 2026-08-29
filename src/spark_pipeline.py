@@ -6,6 +6,7 @@ import time
 try:
     from .pipeline import (
         build_runtime_environment,
+        build_artifact_inventory,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -16,6 +17,7 @@ try:
 except ImportError:  # Support direct execution with `python src/spark_pipeline.py`.
     from pipeline import (
         build_runtime_environment,
+        build_artifact_inventory,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -212,7 +214,12 @@ def build_spark_manifest(
     duration_ms,
     reconciliation,
     output_contract_validation,
+    output_inventory,
 ):
+    output_paths = {
+        "silver_orders": processed_dir / "spark_silver_orders",
+        "rejected_orders": processed_dir / "spark_rejected_orders",
+    }
     return {
         "version": 1,
         "engine": "spark",
@@ -240,18 +247,19 @@ def build_spark_manifest(
         },
         "outputs": {
             "silver_orders": {
-                "path": str(processed_dir / "spark_silver_orders"),
+                "path": str(output_paths["silver_orders"]),
                 "format": "parquet",
                 "columns": list(SILVER_COLUMNS),
                 "rows": reconciliation["silver_rows"],
             },
             "rejected_orders": {
-                "path": str(processed_dir / "spark_rejected_orders"),
+                "path": str(output_paths["rejected_orders"]),
                 "format": "parquet",
                 "columns": list(REJECTED_COLUMNS),
                 "rows": reconciliation["rejected_rows"],
             },
         },
+        "output_inventory": output_inventory,
         "reconciliation": reconciliation,
         "schema_contract_validation": output_contract_validation,
     }
@@ -300,6 +308,12 @@ def run_spark_silver_pipeline(config_path):
         rejected_path = processed_dir / "spark_rejected_orders"
         silver_df.write.mode("overwrite").parquet(str(silver_path))
         rejected_df.write.mode("overwrite").parquet(str(rejected_path))
+        output_inventory = build_artifact_inventory(
+            {
+                "silver_orders": silver_path,
+                "rejected_orders": rejected_path,
+            }
+        )
         completed_at_utc = (
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
@@ -313,6 +327,7 @@ def run_spark_silver_pipeline(config_path):
             duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),
             reconciliation=reconciliation,
             output_contract_validation=output_contract_validation,
+            output_inventory=output_inventory,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         write_json(manifest_path, manifest)
