@@ -300,6 +300,11 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert manifest["version"] == 1
     assert manifest["engine"] == "spark"
     assert manifest["run"]["config_path"] == str(config_path.resolve())
+    assert manifest["run"]["config_file_audit"]["path"] == str(config_path)
+    assert manifest["run"]["config_file_audit"]["exists"] is True
+    assert manifest["run"]["config_file_audit"]["type"] == "file"
+    assert manifest["run"]["config_file_audit"]["bytes"] == config_path.stat().st_size
+    assert manifest["run"]["config_file_audit"]["modified_at_utc"].endswith("Z")
     assert manifest["run"]["raw_path"] == str(raw_path)
     assert manifest["run"]["processed_dir"] == str(processed_dir)
     assert manifest["run"]["started_at_utc"].endswith("Z")
@@ -307,6 +312,11 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert manifest["run"]["duration_ms"] >= 0
     assert manifest["runtime_environment"]["version"] == 1
     assert manifest["source"]["path"] == str(raw_path)
+    assert manifest["source"]["file_audit"]["path"] == str(raw_path)
+    assert manifest["source"]["file_audit"]["exists"] is True
+    assert manifest["source"]["file_audit"]["type"] == "file"
+    assert manifest["source"]["file_audit"]["bytes"] == raw_path.stat().st_size
+    assert manifest["source"]["file_audit"]["modified_at_utc"].endswith("Z")
     assert manifest["source"]["rows"] == 3
     assert manifest["config"] == {
         "included_statuses": ["delivered"],

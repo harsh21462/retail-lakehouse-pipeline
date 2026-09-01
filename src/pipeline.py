@@ -547,6 +547,46 @@ def build_silver_profile(rows):
     }
 
 
+def build_file_audit(path):
+    artifact_path = Path(path)
+    audit = {
+        "path": str(artifact_path),
+        "exists": artifact_path.exists(),
+        "type": "missing",
+        "bytes": 0,
+        "sha256": None,
+        "modified_at_utc": None,
+    }
+    if not artifact_path.exists():
+        return audit
+
+    if artifact_path.is_file():
+        stat = artifact_path.stat()
+        audit.update(
+            {
+                "type": "file",
+                "bytes": stat.st_size,
+                "sha256": file_sha256(artifact_path),
+                "modified_at_utc": datetime.fromtimestamp(
+                    stat.st_mtime,
+                    timezone.utc,
+                )
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+        )
+    elif artifact_path.is_dir():
+        files = _artifact_file_paths(artifact_path)
+        audit.update(
+            {
+                "type": "directory",
+                "bytes": sum(file_path.stat().st_size for file_path in files),
+                "sha256": artifact_sha256(artifact_path),
+            }
+        )
+    return audit
+
+
 def build_run_manifest(
     *,
     config_path,
@@ -593,6 +633,7 @@ def build_run_manifest(
         "run": {
             "config_path": str(config_path),
             "config_sha256": config_sha256,
+            "config_file_audit": build_file_audit(config_path),
             "raw_path": str(raw_path),
             "processed_dir": str(processed_dir),
             "started_at_utc": started_at_utc,
@@ -603,6 +644,7 @@ def build_run_manifest(
         "source": {
             "path": str(raw_path),
             "sha256": source_sha256,
+            "file_audit": build_file_audit(raw_path),
             "rows": len(bronze_rows),
             "profile": build_source_profile(bronze_rows),
             "ingestion": ingestion_event,
@@ -1019,6 +1061,34 @@ def build_run_comparison(
             return {}
         return dependencies
 
+    def source_file_audit(manifest):
+        audit = manifest.get("source", {}).get("file_audit", {})
+        if not isinstance(audit, dict):
+            return {}
+        return audit
+
+    def config_file_audit(manifest):
+        audit = manifest.get("run", {}).get("config_file_audit", {})
+        if not isinstance(audit, dict):
+            return {}
+        return audit
+
+    def audit_changes(previous_audit, current_audit):
+        fields = ["path", "exists", "type", "bytes", "sha256", "modified_at_utc"]
+        return {
+            field: {
+                "previous": previous_audit.get(field),
+                "current": current_audit.get(field),
+                "changed": (
+                    previous_audit.get(field) != current_audit.get(field)
+                    if previous_audit.get(field) is not None
+                    and current_audit.get(field) is not None
+                    else None
+                ),
+            }
+            for field in fields
+        }
+
     def business_impact(manifest):
         impact = manifest.get("business_impact", {})
         if not isinstance(impact, dict):
@@ -1093,6 +1163,14 @@ def build_run_comparison(
     current_source_sha = current_manifest.get("source", {}).get("sha256")
     previous_config_sha = previous_manifest.get("run", {}).get("config_sha256")
     current_config_sha = current_manifest.get("run", {}).get("config_sha256")
+    source_file_audit_changes = audit_changes(
+        source_file_audit(previous_manifest),
+        source_file_audit(current_manifest),
+    )
+    config_file_audit_changes = audit_changes(
+        config_file_audit(previous_manifest),
+        config_file_audit(current_manifest),
+    )
     previous_quality_success = previous_manifest.get("quality", {}).get("success")
     current_quality_success = current_manifest.get("quality", {}).get("success")
     previous_warning_count = previous_manifest.get("health", {}).get("warning_count")
@@ -1161,6 +1239,8 @@ def build_run_comparison(
         ),
         "source_sha256_changed": previous_source_sha != current_source_sha,
         "config_sha256_changed": previous_config_sha != current_config_sha,
+        "source_file_audit_changes": source_file_audit_changes,
+        "config_file_audit_changes": config_file_audit_changes,
         "quality_success_changed": previous_quality_success != current_quality_success,
         "warning_count": {
             "previous": previous_warning_count,
@@ -2041,6 +2121,12 @@ def build_run_summary_markdown(manifest):
     layers = manifest.get("layers", {})
     comparison = manifest.get("run_comparison", {})
     business_impact = manifest.get("business_impact", {})
+    source_file_audit = source.get("file_audit", {})
+    if not isinstance(source_file_audit, dict):
+        source_file_audit = {}
+    config_file_audit = run.get("config_file_audit", {})
+    if not isinstance(config_file_audit, dict):
+        config_file_audit = {}
 
     lines = [
         "# Pipeline Run Summary",
@@ -2049,6 +2135,12 @@ def build_run_summary_markdown(manifest):
         f"- Source: `{_format_summary_value(source.get('path'))}`",
         f"- Source ingestion: "
         f"`{_format_summary_value(source.get('ingestion', {}).get('classification'))}`",
+        f"- Source file audit: "
+        f"{_format_summary_value(source_file_audit.get('bytes'))} bytes, "
+        f"modified {_format_summary_value(source_file_audit.get('modified_at_utc'))}",
+        f"- Config file audit: "
+        f"{_format_summary_value(config_file_audit.get('bytes'))} bytes, "
+        f"modified {_format_summary_value(config_file_audit.get('modified_at_utc'))}",
         f"- Quality: {'passed' if quality.get('success') else 'failed'}",
         f"- Health warnings: {health.get('warning_count', 0)}",
         f"- Config checksum changed: "

@@ -7,6 +7,7 @@ try:
     from .pipeline import (
         build_runtime_environment,
         build_artifact_inventory,
+        build_file_audit,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -18,6 +19,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
     from pipeline import (
         build_runtime_environment,
         build_artifact_inventory,
+        build_file_audit,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -226,6 +228,7 @@ def build_spark_manifest(
         "run": {
             "config_path": str(Path(config_path).resolve()),
             "config_sha256": file_sha256(config_path),
+            "config_file_audit": build_file_audit(Path(config_path).resolve()),
             "raw_path": str(raw_path),
             "processed_dir": str(processed_dir),
             "started_at_utc": started_at_utc,
@@ -236,6 +239,7 @@ def build_spark_manifest(
         "source": {
             "path": str(raw_path),
             "sha256": file_sha256(raw_path),
+            "file_audit": build_file_audit(raw_path),
             "rows": reconciliation["bronze_rows"],
         },
         "config": {

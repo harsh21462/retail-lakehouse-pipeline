@@ -5,6 +5,7 @@ import pytest
 from src.pipeline import (
     artifact_sha256,
     build_artifact_inventory,
+    build_file_audit,
     build_health_warnings,
     build_health_threshold_breaches,
     build_lineage,
@@ -385,6 +386,14 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "run": {"completed_at_utc": "2026-07-29T01:00:00Z"},
         "source": {
             "sha256": "previous",
+            "file_audit": {
+                "path": "/data/raw/orders.csv",
+                "exists": True,
+                "type": "file",
+                "bytes": 100,
+                "sha256": "previous",
+                "modified_at_utc": "2026-07-29T00:00:00Z",
+            },
             "profile": {
                 "status_counts": {"cancelled": 2, "delivered": 8},
             },
@@ -447,9 +456,27 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         },
     }
     current_manifest = {
-        "run": {"completed_at_utc": "2026-07-30T01:00:00Z"},
+        "run": {
+            "completed_at_utc": "2026-07-30T01:00:00Z",
+            "config_file_audit": {
+                "path": "/opt/retail/config/pipeline.json",
+                "exists": True,
+                "type": "file",
+                "bytes": 75,
+                "sha256": "current-config",
+                "modified_at_utc": "2026-07-30T00:00:00Z",
+            },
+        },
         "source": {
             "sha256": "current",
+            "file_audit": {
+                "path": "/data/raw/orders.csv",
+                "exists": True,
+                "type": "file",
+                "bytes": 125,
+                "sha256": "current",
+                "modified_at_utc": "2026-07-30T00:00:00Z",
+            },
             "profile": {
                 "high_watermark": {
                     "order_date": "2026-07-30",
@@ -523,6 +550,21 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
 
     assert comparison["previous_manifest_available"] is True
     assert comparison["source_sha256_changed"] is True
+    assert comparison["source_file_audit_changes"]["bytes"] == {
+        "previous": 100,
+        "current": 125,
+        "changed": True,
+    }
+    assert comparison["source_file_audit_changes"]["path"] == {
+        "previous": "/data/raw/orders.csv",
+        "current": "/data/raw/orders.csv",
+        "changed": False,
+    }
+    assert comparison["config_file_audit_changes"]["sha256"] == {
+        "previous": None,
+        "current": "current-config",
+        "changed": None,
+    }
     assert comparison["quality_success_changed"] is False
     assert comparison["warning_count"] == {"previous": 1, "current": 0, "delta": -1}
     assert comparison["high_watermarks"] == {
@@ -1010,6 +1052,31 @@ def test_artifact_inventory_records_files_directories_and_missing_paths(tmp_path
         "files": 0,
         "bytes": 0,
         "sha256": None,
+    }
+
+
+def test_file_audit_records_file_size_hash_and_missing_paths(tmp_path):
+    file_path = tmp_path / "orders.csv"
+    file_path.write_text("order_id\n1001\n", encoding="utf-8")
+
+    audit = build_file_audit(file_path)
+
+    assert audit["path"] == str(file_path)
+    assert audit["exists"] is True
+    assert audit["type"] == "file"
+    assert audit["bytes"] == file_path.stat().st_size
+    assert audit["sha256"] == artifact_sha256(file_path)
+    assert audit["modified_at_utc"].endswith("Z")
+
+    missing_audit = build_file_audit(tmp_path / "missing.csv")
+
+    assert missing_audit == {
+        "path": str(tmp_path / "missing.csv"),
+        "exists": False,
+        "type": "missing",
+        "bytes": 0,
+        "sha256": None,
+        "modified_at_utc": None,
     }
 
 

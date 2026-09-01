@@ -257,9 +257,27 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     assert manifest["runtime_environment"]["python"]["version"]
     assert manifest["runtime_environment"]["platform"]["system"] is not None
     assert "pyarrow" in manifest["runtime_environment"]["dependencies"]
+    assert manifest["run"]["config_file_audit"]["path"] == str(config_path.resolve())
+    assert manifest["run"]["config_file_audit"]["exists"] is True
+    assert manifest["run"]["config_file_audit"]["type"] == "file"
+    assert manifest["run"]["config_file_audit"]["bytes"] == config_path.stat().st_size
+    assert manifest["run"]["config_file_audit"]["sha256"] == (
+        hashlib.sha256(config_path.read_bytes()).hexdigest()
+    )
+    assert manifest["run"]["config_file_audit"]["modified_at_utc"].endswith("Z")
     assert manifest["source"] == {
         "path": str(raw_path),
         "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        "file_audit": {
+            "path": str(raw_path),
+            "exists": True,
+            "type": "file",
+            "bytes": raw_path.stat().st_size,
+            "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+            "modified_at_utc": (
+                manifest["source"]["file_audit"]["modified_at_utc"]
+            ),
+        },
         "rows": 3,
         "profile": {
             "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
@@ -273,6 +291,7 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
             "known_paths_for_source": [str(raw_path)],
         },
     }
+    assert manifest["source"]["file_audit"]["modified_at_utc"].endswith("Z")
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": None, "end": None},
@@ -418,6 +437,8 @@ def test_pipeline_writes_expected_lakehouse_layers(tmp_path):
     )
     assert "# Pipeline Run Summary" in run_summary
     assert f"- Source: `{raw_path}`" in run_summary
+    assert "- Source file audit:" in run_summary
+    assert "- Config file audit:" in run_summary
     assert "- Quality: passed" in run_summary
     assert "- Runtime environment changed: n/a" in run_summary
     assert "## Quality Expectations" in run_summary

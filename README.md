@@ -79,7 +79,8 @@ retail-lakehouse-pipeline/
    source files are visible even when they arrive under a different path.
 10. Write a pipeline manifest with run timing and resolved paths, source
     checksum, source ingestion classification, config path and checksum,
-    config, row counts, quality status, row count reconciliation, source and
+    config, input file audit metadata, row counts, quality status,
+    row count reconciliation, source and
     silver data profiles with deterministic high-watermarks,
     rejection reason counts, bounded rejected-order samples by reason,
     accepted and rejected business-impact metrics,
@@ -97,8 +98,9 @@ retail-lakehouse-pipeline/
     normalized into machine-readable observed-versus-threshold records so
     schedulers and dashboards do not need to parse warning text.
 11. Write a Markdown run summary derived from the manifest for quick
-    operational review of source ingestion status, quality expectation
-    pass/fail details, warning counts, row-count and business-impact deltas,
+    operational review of source ingestion status, raw/config file audit
+    details, quality expectation pass/fail details, warning counts,
+    row-count and business-impact deltas,
     source and silver high-watermarks, accepted versus rejected revenue
     exposure, sampled rejected orders by reason, and changed artifacts.
 12. Write a generated data catalog from the published schema contracts,
@@ -280,6 +282,8 @@ Each successful run also writes:
   SHA-256, included order statuses, optional order-date window, source ingestion
   classification
   (`new_source_file`, `repeated_source_file`, or `repeated_content_new_path`),
+  raw source and config file audit metadata including path, existence, type,
+  byte size, SHA-256 checksum, and UTC modified time,
   bronze/silver/gold row counts, source status counts, source and silver order
   date ranges, high-watermarks for the latest processed order date and order
   ID, silver customer/category/revenue profile, bronze-to-silver/rejected row
@@ -327,9 +331,12 @@ Each successful run also writes:
   if a prior manifest is missing or malformed, the comparison records the
   reason instead of fabricating deltas. Business-impact deltas cover accepted
   and rejected orders, rejection rate, accepted revenue, rejected potential
-  revenue, and realized revenue rate.
+  revenue, and realized revenue rate. Input file audit comparisons show
+  whether raw/config path, existence, type, size, checksum, and modified time
+  changed when both runs have that metadata.
 - `pipeline_run_summary.md` with a concise human-readable handoff of source
-  ingestion classification, quality status, per-expectation pass/fail
+  ingestion classification, raw/config file audit details, quality status,
+  per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, threshold breach details, current row counts, run-to-run
   row-count and business-impact deltas, source and silver high-watermarks,
