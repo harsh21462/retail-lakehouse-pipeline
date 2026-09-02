@@ -1,3 +1,4 @@
+import argparse
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -8,6 +9,7 @@ try:
         build_runtime_environment,
         build_artifact_inventory,
         build_file_audit,
+        DEFAULT_CONFIG_PATH,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -20,6 +22,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         build_runtime_environment,
         build_artifact_inventory,
         build_file_audit,
+        DEFAULT_CONFIG_PATH,
         file_sha256,
         load_config,
         raise_for_failed_reconciliation,
@@ -350,5 +353,26 @@ def run_spark_silver_pipeline(config_path):
                 LOGGER.warning("Failed to stop Spark session", exc_info=True)
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Run the Spark silver-layer retail lakehouse adapter."
+    )
+    parser.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        type=Path,
+        help=(
+            "Path to pipeline config JSON. Defaults to "
+            f"{DEFAULT_CONFIG_PATH}."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def cli(argv=None):
+    args = parse_args(argv)
+    return run_spark_silver_pipeline(args.config)
+
+
 if __name__ == "__main__":
-    run_spark_silver_pipeline(Path("config") / "pipeline.json")
+    cli()

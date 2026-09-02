@@ -103,6 +103,32 @@ class FakeSparkSessionBuilder:
 FakeSparkSession.builder = FakeSparkSessionBuilder()
 
 
+def test_spark_cli_uses_default_config_path_when_not_overridden():
+    args = spark_pipeline.parse_args([])
+
+    assert args.config == spark_pipeline.DEFAULT_CONFIG_PATH
+
+
+def test_spark_cli_accepts_config_path_override(tmp_path, monkeypatch):
+    config_path = tmp_path / "pipeline.json"
+    called_with = []
+
+    def fake_run_spark_silver_pipeline(path):
+        called_with.append(path)
+        return {"manifest_path": "manifest.json"}
+
+    monkeypatch.setattr(
+        spark_pipeline,
+        "run_spark_silver_pipeline",
+        fake_run_spark_silver_pipeline,
+    )
+
+    result = spark_pipeline.cli(["--config", str(config_path)])
+
+    assert called_with == [config_path]
+    assert result == {"manifest_path": "manifest.json"}
+
+
 def test_silver_selection_sql_escapes_status_literals_and_date_window():
     expression = spark_pipeline.build_silver_selection_sql(
         ["delivered", "customer's_pickup"],

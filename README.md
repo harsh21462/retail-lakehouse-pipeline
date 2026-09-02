@@ -247,24 +247,28 @@ silver and rejected-order transform boundary:
 ```bash
 python -m pip install pyspark
 python src/spark_pipeline.py
+python src/spark_pipeline.py --config config/pipeline.json
 ```
 
 PySpark is intentionally not part of `requirements-dev.txt` because it brings a
 JVM/runtime dependency that is unnecessary for the default local and CI checks.
-The adapter fails with an explicit error when PySpark is missing, and the unit
-tests validate the generated Spark predicates, status/date-window handling, and
-published column contracts without requiring a Spark runtime. Before publishing
-Spark-managed Parquet outputs, it also checks that the raw row count equals
-accepted plus rejected rows and fails the run if Spark did not account for every
-input row. Successful Spark runs emit `spark_pipeline_manifest.json` next to the
-Spark Parquet outputs. Before those outputs are overwritten, the adapter
-validates that the silver and rejected-order DataFrame columns still match the
-published contracts and records the validation in the manifest. After both
-outputs are written, the manifest records file counts, byte sizes, and
-deterministic SHA-256 checksums for the Spark Parquet directories so scheduled
-runs can detect missing or changed output artifacts. The Spark session is
-stopped in a `finally` block so failed reconciliations or contract checks do
-not leak a live session in scheduled environments.
+The adapter accepts the same `--config` override as the Python batch pipeline,
+so scheduled Spark runs and one-off backfills can use environment-specific
+paths without editing code. It fails with an explicit error when PySpark is
+missing, and the unit tests validate the generated Spark predicates,
+status/date-window handling, CLI config routing, and published column contracts
+without requiring a Spark runtime. Before publishing Spark-managed Parquet
+outputs, it also checks that the raw row count equals accepted plus rejected
+rows and fails the run if Spark did not account for every input row. Successful
+Spark runs emit `spark_pipeline_manifest.json` next to the Spark Parquet
+outputs. Before those outputs are overwritten, the adapter validates that the
+silver and rejected-order DataFrame columns still match the published contracts
+and records the validation in the manifest. After both outputs are written, the
+manifest records file counts, byte sizes, and deterministic SHA-256 checksums
+for the Spark Parquet directories so scheduled runs can detect missing or
+changed output artifacts. The Spark session is stopped in a `finally` block so
+failed reconciliations or contract checks do not leak a live session in
+scheduled environments.
 
 Output files are written to:
 
