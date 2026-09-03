@@ -117,10 +117,13 @@ retail-lakehouse-pipeline/
    when PySpark is installed. It uses the same config, status scope, date
    window semantics, silver columns, rejected-order columns, and rejection
    reasons as the Python pipeline, reconciles raw rows against Spark silver
-   plus rejected rows before overwriting outputs, and writes Spark-managed
+   plus rejected rows before publishing outputs, and writes Spark-managed
    Parquet outputs under `spark_silver_orders/` and `spark_rejected_orders/`.
-   It validates the Spark DataFrame column contracts before any overwrite, so
+   It validates the Spark DataFrame column contracts before any publish, so
    schema drift fails the run instead of publishing incompatible Parquet.
+   Spark Parquet directories are written to hidden sibling staging directories
+   first and swapped into place only after both output writes succeed, so a
+   failed Spark write preserves the previous published output set.
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
    environment details, row counts, the Spark reconciliation result, and the
@@ -261,14 +264,16 @@ without requiring a Spark runtime. Before publishing Spark-managed Parquet
 outputs, it also checks that the raw row count equals accepted plus rejected
 rows and fails the run if Spark did not account for every input row. Successful
 Spark runs emit `spark_pipeline_manifest.json` next to the Spark Parquet
-outputs. Before those outputs are overwritten, the adapter validates that the
+outputs. Before those outputs are published, the adapter validates that the
 silver and rejected-order DataFrame columns still match the published contracts
-and records the validation in the manifest. After both outputs are written, the
-manifest records file counts, byte sizes, and deterministic SHA-256 checksums
-for the Spark Parquet directories so scheduled runs can detect missing or
-changed output artifacts. The Spark session is stopped in a `finally` block so
-failed reconciliations or contract checks do not leak a live session in
-scheduled environments.
+and records the validation in the manifest. It writes both Spark outputs to
+hidden sibling staging directories before replacing the published directories,
+which prevents an ordinary Spark write failure from deleting the previous
+complete output. After both outputs are published, the manifest records file
+counts, byte sizes, and deterministic SHA-256 checksums for the Spark Parquet
+directories so scheduled runs can detect missing or changed output artifacts.
+The Spark session is stopped in a `finally` block so failed reconciliations,
+contract checks, or writes do not leak a live session in scheduled environments.
 
 Output files are written to:
 

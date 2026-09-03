@@ -59,6 +59,12 @@ class FakeDataFrameWriter:
         )
 
 
+class FailingDataFrameWriter(FakeDataFrameWriter):
+    def parquet(self, path):
+        self.written_paths.append((self.mode_value, path))
+        raise OSError("simulated spark write failure")
+
+
 class FakeWritableDataFrame(FakeDataFrame):
     def __init__(self, count_value, written_paths, columns=None):
         super().__init__(count_value=count_value, columns=columns)
@@ -312,10 +318,18 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
             "difference": 0,
         },
     }
-    assert written_paths == [
-        ("overwrite", str(processed_dir / "spark_silver_orders")),
-        ("overwrite", str(processed_dir / "spark_rejected_orders")),
-    ]
+    assert len(written_paths) == 2
+    assert written_paths[0][0] == "overwrite"
+    assert written_paths[1][0] == "overwrite"
+    assert Path(written_paths[0][1]).name.startswith(".spark_silver_orders.staged.")
+    assert Path(written_paths[1][1]).name.startswith(
+        ".spark_rejected_orders.staged."
+    )
+    assert (processed_dir / "spark_silver_orders" / "part-00000.parquet").exists()
+    assert (
+        processed_dir / "spark_rejected_orders" / "part-00000.parquet"
+    ).exists()
+    assert list(processed_dir.glob(".spark_*_orders.staged.*")) == []
     assert FakeSparkSession.stop_count == 1
 
     manifest = json.loads(
@@ -507,6 +521,70 @@ def test_spark_pipeline_fails_before_writing_when_output_contract_drifts(
     assert written_paths == []
     assert FakeSparkSession.stop_count == 1
     assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+
+
+def test_spark_pipeline_preserves_existing_outputs_when_staged_write_fails(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "pipeline.json"
+    raw_path = tmp_path / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    existing_silver_file = (
+        processed_dir / "spark_silver_orders" / "part-00000.parquet"
+    )
+    existing_rejected_file = (
+        processed_dir / "spark_rejected_orders" / "part-00000.parquet"
+    )
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n",
+        encoding="utf-8",
+    )
+    existing_silver_file.parent.mkdir(parents=True)
+    existing_silver_file.write_text("previous silver\n", encoding="utf-8")
+    existing_rejected_file.parent.mkdir(parents=True)
+    existing_rejected_file.write_text("previous rejected\n", encoding="utf-8")
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    written_paths = []
+    raw_df = FakeDataFrame(count_value=3)
+    silver_df = FakeWritableDataFrame(
+        2,
+        written_paths,
+        columns=spark_pipeline.SILVER_COLUMNS,
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+    )
+    rejected_df.write = FailingDataFrameWriter(written_paths)
+    FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
+
+    monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
+    monkeypatch.setattr(
+        spark_pipeline,
+        "build_silver_and_rejected_dataframes",
+        lambda *args, **kwargs: (silver_df, rejected_df),
+    )
+
+    with pytest.raises(OSError, match="simulated spark write failure"):
+        spark_pipeline.run_spark_silver_pipeline(config_path)
+
+    assert existing_silver_file.read_text(encoding="utf-8") == "previous silver\n"
+    assert existing_rejected_file.read_text(encoding="utf-8") == "previous rejected\n"
+    assert list(processed_dir.glob(".spark_*_orders.staged.*")) == []
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+    assert FakeSparkSession.stop_count == 1
 
 
 def test_spark_pipeline_reports_missing_optional_dependency(monkeypatch):

@@ -2,6 +2,7 @@ import argparse
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import shutil
 import time
 
 try:
@@ -12,7 +13,9 @@ try:
         DEFAULT_CONFIG_PATH,
         file_sha256,
         load_config,
+        make_staged_directory,
         raise_for_failed_reconciliation,
+        replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
     )
@@ -25,7 +28,9 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         DEFAULT_CONFIG_PATH,
         file_sha256,
         load_config,
+        make_staged_directory,
         raise_for_failed_reconciliation,
+        replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
     )
@@ -208,6 +213,29 @@ def raise_for_failed_spark_output_contract_validation(validation):
         )
 
 
+def write_spark_parquet_outputs(outputs):
+    staged_outputs = {}
+    try:
+        for artifact_name, payload in outputs.items():
+            target_path = Path(payload["path"])
+            staged_path = make_staged_directory(target_path)
+            staged_outputs[artifact_name] = {
+                "target_path": target_path,
+                "staged_path": staged_path,
+            }
+            payload["dataframe"].write.mode("overwrite").parquet(str(staged_path))
+
+        for payload in staged_outputs.values():
+            replace_directory_after_success(
+                payload["target_path"],
+                payload["staged_path"],
+            )
+    except Exception:
+        for payload in staged_outputs.values():
+            shutil.rmtree(payload["staged_path"], ignore_errors=True)
+        raise
+
+
 def build_spark_manifest(
     *,
     config_path,
@@ -313,8 +341,18 @@ def run_spark_silver_pipeline(config_path):
         )
         silver_path = processed_dir / "spark_silver_orders"
         rejected_path = processed_dir / "spark_rejected_orders"
-        silver_df.write.mode("overwrite").parquet(str(silver_path))
-        rejected_df.write.mode("overwrite").parquet(str(rejected_path))
+        write_spark_parquet_outputs(
+            {
+                "silver_orders": {
+                    "dataframe": silver_df,
+                    "path": silver_path,
+                },
+                "rejected_orders": {
+                    "dataframe": rejected_df,
+                    "path": rejected_path,
+                },
+            }
+        )
         output_inventory = build_artifact_inventory(
             {
                 "silver_orders": silver_path,
