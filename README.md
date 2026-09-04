@@ -86,7 +86,7 @@ retail-lakehouse-pipeline/
     accepted and rejected business-impact metrics,
     non-blocking health warnings, run-to-run comparison
     against the previous manifest, including business-impact, source
-    status-count, and rejection-reason deltas, partition inventory, output
+    status-count, rejection-reason, and config-scope deltas, partition inventory, output
     artifact paths,
     artifact size and checksum inventory, and a machine-readable
     runtime environment snapshot, schema contract,
@@ -324,8 +324,9 @@ Each successful run also writes:
   sorted relative file paths and file contents so partitioned outputs can be
   compared across runs. The run comparison also records whether source and
   silver high-watermarks changed since the previous manifest, plus raw source
-  status-count deltas and business-impact deltas so changes in order status
-  mix and revenue exposure are visible before they flow into rejection metrics.
+  status-count deltas, business-impact deltas, included-status changes,
+  order-date window changes, and warning-threshold changes so config drift is
+  visible without manually diffing JSON files.
   The manifest also includes a versioned inventory of
   executable SQL gold models with model paths, SHA-256 checksums, input tables,
   output artifacts, and output-column contracts. The manifest also includes a
@@ -348,7 +349,7 @@ Each successful run also writes:
   per-expectation pass/fail
   observations, failed-row sample identifiers when quality checks fail,
   health warnings, threshold breach details, current row counts, run-to-run
-  row-count and business-impact deltas, source and silver high-watermarks,
+  row-count, business-impact, and config-scope deltas, source and silver high-watermarks,
   accepted versus rejected revenue exposure, sampled rejected orders by reason,
   and changed artifacts from the manifest.
 - `data_catalog.md` with a BI-friendly catalog of published bronze, silver,

@@ -1685,6 +1685,21 @@ def test_pipeline_marks_repeated_source_content_from_new_path(tmp_path):
     assert manifest["run_comparison"]["previous_manifest_available"] is True
     assert manifest["run_comparison"]["source_sha256_changed"] is False
     assert manifest["run_comparison"]["config_sha256_changed"] is True
+    assert manifest["run_comparison"]["config_scope_changes"] == {
+        "included_statuses": {
+            "previous": ["delivered"],
+            "current": ["delivered"],
+            "added": [],
+            "removed": [],
+            "changed": False,
+        },
+        "order_date_window": {
+            "previous": {"start": None, "end": None},
+            "current": {"start": None, "end": None},
+            "changed": False,
+        },
+        "warning_thresholds": {},
+    }
     assert manifest["run_comparison"]["warning_count"] == {
         "previous": 0,
         "current": 0,
@@ -1825,6 +1840,27 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
             },
             "run_comparison": {
                 "config_sha256_changed": False,
+                "config_scope_changes": {
+                    "included_statuses": {
+                        "previous": ["cancelled", "delivered"],
+                        "current": ["delivered"],
+                        "added": [],
+                        "removed": ["cancelled"],
+                        "changed": True,
+                    },
+                    "order_date_window": {
+                        "previous": {"start": "2026-06-01", "end": "2026-06-29"},
+                        "current": {"start": "2026-06-01", "end": "2026-06-30"},
+                        "changed": True,
+                    },
+                    "warning_thresholds": {
+                        "max_rejection_rate": {
+                            "previous": 0.25,
+                            "current": 0.2,
+                            "changed": True,
+                        }
+                    },
+                },
                 "row_count_deltas": {
                     "bronze": {"delta": 2},
                     "silver": {"delta": -1},
@@ -1865,6 +1901,16 @@ def test_run_summary_markdown_reports_warnings_and_changed_artifacts():
     assert "| source | 2026-07-30 (`1012`) | True |" in summary
     assert "| silver | 2026-07-29 (`1010`) | False |" in summary
     assert "## Business Impact" in summary
+    assert "## Config Scope Changes" in summary
+    assert (
+        "| Included statuses | `['cancelled', 'delivered']` | "
+        "`['delivered']` | True |"
+    ) in summary
+    assert (
+        "| Order date window | `{'start': '2026-06-01', 'end': '2026-06-29'}` | "
+        "`{'start': '2026-06-01', 'end': '2026-06-30'}` | True |"
+    ) in summary
+    assert "| Warning threshold `max_rejection_rate` | `0.25` | `0.2` | True |" in summary
     assert "| Accepted orders | 8 | -1 |" in summary
     assert "| Rejection rate | 0.2 | +0.1 |" in summary
     assert "| Accepted revenue | 1200.0 | -100.0 |" in summary

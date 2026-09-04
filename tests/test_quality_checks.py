@@ -439,6 +439,14 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "realized_rate": 0.8,
             },
         },
+        "config": {
+            "included_statuses": ["cancelled", "delivered"],
+            "order_date_window": {"start": "2026-07-01", "end": "2026-07-29"},
+            "warning_thresholds": {
+                "max_rejection_rate": 0.25,
+                "min_silver_rows": 8,
+            },
+        },
         "layers": {
             "bronze": {"rows": 10},
             "rejected": {
@@ -530,6 +538,14 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
                 "realized_rate": 0.933333,
             },
         },
+        "config": {
+            "included_statuses": ["delivered", "returned"],
+            "order_date_window": {"start": "2026-07-01", "end": "2026-07-30"},
+            "warning_thresholds": {
+                "max_rejection_rate": 0.2,
+                "max_source_lag_days": 2,
+            },
+        },
         "layers": {
             "bronze": {"rows": 12},
             "rejected": {
@@ -564,6 +580,37 @@ def test_run_comparison_reports_layer_deltas_and_status_changes():
         "previous": None,
         "current": "current-config",
         "changed": None,
+    }
+    assert comparison["config_scope_changes"] == {
+        "included_statuses": {
+            "previous": ["cancelled", "delivered"],
+            "current": ["delivered", "returned"],
+            "added": ["returned"],
+            "removed": ["cancelled"],
+            "changed": True,
+        },
+        "order_date_window": {
+            "previous": {"start": "2026-07-01", "end": "2026-07-29"},
+            "current": {"start": "2026-07-01", "end": "2026-07-30"},
+            "changed": True,
+        },
+        "warning_thresholds": {
+            "max_rejection_rate": {
+                "previous": 0.25,
+                "current": 0.2,
+                "changed": True,
+            },
+            "max_source_lag_days": {
+                "previous": None,
+                "current": 2,
+                "changed": None,
+            },
+            "min_silver_rows": {
+                "previous": 8,
+                "current": None,
+                "changed": None,
+            },
+        },
     }
     assert comparison["quality_success_changed"] is False
     assert comparison["warning_count"] == {"previous": 1, "current": 0, "delta": -1}
@@ -686,6 +733,35 @@ def test_run_comparison_records_unavailable_previous_manifest():
         "version": 1,
         "previous_manifest_available": False,
         "unavailable_reason": "invalid_json",
+    }
+
+
+def test_run_comparison_tolerates_malformed_config_scope():
+    comparison = build_run_comparison(
+        {
+            "config": {
+                "included_statuses": "delivered",
+                "order_date_window": "not-a-window",
+                "warning_thresholds": ["not", "thresholds"],
+            }
+        },
+        {"config": "not-an-object"},
+    )
+
+    assert comparison["config_scope_changes"] == {
+        "included_statuses": {
+            "previous": None,
+            "current": None,
+            "added": None,
+            "removed": None,
+            "changed": None,
+        },
+        "order_date_window": {
+            "previous": None,
+            "current": None,
+            "changed": None,
+        },
+        "warning_thresholds": {},
     }
 
 

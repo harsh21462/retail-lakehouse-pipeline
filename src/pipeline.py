@@ -1073,6 +1073,36 @@ def build_run_comparison(
             return {}
         return audit
 
+    def manifest_config(manifest):
+        config = manifest.get("config", {})
+        if not isinstance(config, dict):
+            return {}
+        return config
+
+    def included_statuses(manifest):
+        config = manifest_config(manifest)
+        statuses = config.get("included_statuses")
+        if not isinstance(statuses, list):
+            return None
+        return sorted(status for status in statuses if isinstance(status, str))
+
+    def order_date_window(manifest):
+        config = manifest_config(manifest)
+        window = config.get("order_date_window")
+        if not isinstance(window, dict):
+            return None
+        return {
+            "start": window.get("start"),
+            "end": window.get("end"),
+        }
+
+    def warning_thresholds(manifest):
+        config = manifest_config(manifest)
+        thresholds = config.get("warning_thresholds")
+        if not isinstance(thresholds, dict):
+            return {}
+        return thresholds
+
     def audit_changes(previous_audit, current_audit):
         fields = ["path", "exists", "type", "bytes", "sha256", "modified_at_utc"]
         return {
@@ -1163,6 +1193,39 @@ def build_run_comparison(
     current_source_sha = current_manifest.get("source", {}).get("sha256")
     previous_config_sha = previous_manifest.get("run", {}).get("config_sha256")
     current_config_sha = current_manifest.get("run", {}).get("config_sha256")
+    previous_included_statuses = included_statuses(previous_manifest)
+    current_included_statuses = included_statuses(current_manifest)
+    added_statuses = None
+    removed_statuses = None
+    if (
+        previous_included_statuses is not None
+        and current_included_statuses is not None
+    ):
+        added_statuses = sorted(
+            set(current_included_statuses) - set(previous_included_statuses)
+        )
+        removed_statuses = sorted(
+            set(previous_included_statuses) - set(current_included_statuses)
+        )
+    previous_order_date_window = order_date_window(previous_manifest)
+    current_order_date_window = order_date_window(current_manifest)
+    previous_warning_thresholds = warning_thresholds(previous_manifest)
+    current_warning_thresholds = warning_thresholds(current_manifest)
+    warning_threshold_changes = {}
+    for threshold_name in sorted(
+        set(previous_warning_thresholds) | set(current_warning_thresholds)
+    ):
+        previous_value = previous_warning_thresholds.get(threshold_name)
+        current_value = current_warning_thresholds.get(threshold_name)
+        warning_threshold_changes[threshold_name] = {
+            "previous": previous_value,
+            "current": current_value,
+            "changed": (
+                previous_value != current_value
+                if previous_value is not None and current_value is not None
+                else None
+            ),
+        }
     source_file_audit_changes = audit_changes(
         source_file_audit(previous_manifest),
         source_file_audit(current_manifest),
@@ -1239,6 +1302,31 @@ def build_run_comparison(
         ),
         "source_sha256_changed": previous_source_sha != current_source_sha,
         "config_sha256_changed": previous_config_sha != current_config_sha,
+        "config_scope_changes": {
+            "included_statuses": {
+                "previous": previous_included_statuses,
+                "current": current_included_statuses,
+                "added": added_statuses,
+                "removed": removed_statuses,
+                "changed": (
+                    previous_included_statuses != current_included_statuses
+                    if previous_included_statuses is not None
+                    and current_included_statuses is not None
+                    else None
+                ),
+            },
+            "order_date_window": {
+                "previous": previous_order_date_window,
+                "current": current_order_date_window,
+                "changed": (
+                    previous_order_date_window != current_order_date_window
+                    if previous_order_date_window is not None
+                    and current_order_date_window is not None
+                    else None
+                ),
+            },
+            "warning_thresholds": warning_threshold_changes,
+        },
         "source_file_audit_changes": source_file_audit_changes,
         "config_file_audit_changes": config_file_audit_changes,
         "quality_success_changed": previous_quality_success != current_quality_success,
@@ -2112,6 +2200,44 @@ def _format_rejected_order_sample_rows(rejected_samples):
     return rows
 
 
+def _format_config_scope_change_rows(config_scope_changes):
+    if not isinstance(config_scope_changes, dict):
+        return []
+
+    rows = []
+    included_statuses = config_scope_changes.get("included_statuses", {})
+    if isinstance(included_statuses, dict):
+        rows.append(
+            "| Included statuses | "
+            f"`{_format_summary_value(included_statuses.get('previous'))}` | "
+            f"`{_format_summary_value(included_statuses.get('current'))}` | "
+            f"{_format_summary_value(included_statuses.get('changed'))} |"
+        )
+
+    order_date_window = config_scope_changes.get("order_date_window", {})
+    if isinstance(order_date_window, dict):
+        rows.append(
+            "| Order date window | "
+            f"`{_format_summary_value(order_date_window.get('previous'))}` | "
+            f"`{_format_summary_value(order_date_window.get('current'))}` | "
+            f"{_format_summary_value(order_date_window.get('changed'))} |"
+        )
+
+    warning_thresholds = config_scope_changes.get("warning_thresholds", {})
+    if isinstance(warning_thresholds, dict):
+        for threshold_name, change in sorted(warning_thresholds.items()):
+            if not isinstance(change, dict):
+                continue
+            rows.append(
+                f"| Warning threshold `{threshold_name}` | "
+                f"`{_format_summary_value(change.get('previous'))}` | "
+                f"`{_format_summary_value(change.get('current'))}` | "
+                f"{_format_summary_value(change.get('changed'))} |"
+            )
+
+    return rows
+
+
 def build_run_summary_markdown(manifest):
     run = manifest.get("run", {})
     source = manifest.get("source", {})
@@ -2157,6 +2283,21 @@ def build_run_summary_markdown(manifest):
         f"to {_format_summary_value(config.get('order_date_window', {}).get('end'))}",
         "",
     ]
+
+    config_scope_change_rows = _format_config_scope_change_rows(
+        comparison.get("config_scope_changes", {})
+    )
+    if config_scope_change_rows:
+        lines.extend(
+            [
+                "",
+                "## Config Scope Changes",
+                "",
+                "| Field | Previous | Current | Changed |",
+                "| --- | --- | --- | --- |",
+                *config_scope_change_rows,
+            ]
+        )
 
     if layers:
         lines.extend(
