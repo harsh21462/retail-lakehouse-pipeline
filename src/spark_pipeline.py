@@ -12,6 +12,7 @@ try:
         build_file_audit,
         DEFAULT_CONFIG_PATH,
         file_sha256,
+        load_previous_run_manifest,
         load_config,
         make_staged_directory,
         raise_for_failed_reconciliation,
@@ -27,6 +28,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         build_file_audit,
         DEFAULT_CONFIG_PATH,
         file_sha256,
+        load_previous_run_manifest,
         load_config,
         make_staged_directory,
         raise_for_failed_reconciliation,
@@ -279,6 +281,7 @@ def build_spark_manifest(
                 "start": config.get("order_date_start"),
                 "end": config.get("order_date_end"),
             },
+            "warning_thresholds": dict(config.get("warning_thresholds", {})),
         },
         "outputs": {
             "silver_orders": {
@@ -297,6 +300,160 @@ def build_spark_manifest(
         "output_inventory": output_inventory,
         "reconciliation": reconciliation,
         "schema_contract_validation": output_contract_validation,
+    }
+
+
+def _spark_outputs(manifest):
+    outputs = manifest.get("outputs", {})
+    if not isinstance(outputs, dict):
+        return {}
+    return outputs
+
+
+def _spark_output_rows(manifest, output_name):
+    output = _spark_outputs(manifest).get(output_name, {})
+    if not isinstance(output, dict):
+        return None
+    return output.get("rows")
+
+
+def _delta(previous_value, current_value):
+    if previous_value is None or current_value is None:
+        return None
+    return current_value - previous_value
+
+
+def _spark_manifest_config(manifest):
+    config = manifest.get("config", {})
+    if not isinstance(config, dict):
+        return {}
+    return config
+
+
+def _spark_included_statuses(manifest):
+    statuses = _spark_manifest_config(manifest).get("included_statuses")
+    if not isinstance(statuses, list):
+        return []
+    return list(statuses)
+
+
+def _spark_order_date_window(manifest):
+    window = _spark_manifest_config(manifest).get("order_date_window")
+    if not isinstance(window, dict):
+        return {"start": None, "end": None}
+    return {
+        "start": window.get("start"),
+        "end": window.get("end"),
+    }
+
+
+def _spark_warning_thresholds(manifest):
+    thresholds = _spark_manifest_config(manifest).get("warning_thresholds")
+    if not isinstance(thresholds, dict):
+        return {}
+    return dict(thresholds)
+
+
+def _spark_output_inventory(manifest):
+    inventory = manifest.get("output_inventory", {})
+    if not isinstance(inventory, dict):
+        return {}
+    return inventory
+
+
+def build_spark_run_comparison(
+    current_manifest,
+    previous_manifest=None,
+    unavailable_reason=None,
+):
+    if previous_manifest is None:
+        return {
+            "version": 1,
+            "previous_manifest_available": False,
+            "unavailable_reason": unavailable_reason or "not_found",
+        }
+
+    output_names = sorted(
+        set(_spark_outputs(previous_manifest)) | set(_spark_outputs(current_manifest))
+    )
+    output_row_deltas = {}
+    for output_name in output_names:
+        previous_rows = _spark_output_rows(previous_manifest, output_name)
+        current_rows = _spark_output_rows(current_manifest, output_name)
+        output_row_deltas[output_name] = {
+            "previous": previous_rows,
+            "current": current_rows,
+            "delta": _delta(previous_rows, current_rows),
+        }
+
+    previous_statuses = _spark_included_statuses(previous_manifest)
+    current_statuses = _spark_included_statuses(current_manifest)
+    previous_window = _spark_order_date_window(previous_manifest)
+    current_window = _spark_order_date_window(current_manifest)
+    previous_thresholds = _spark_warning_thresholds(previous_manifest)
+    current_thresholds = _spark_warning_thresholds(current_manifest)
+    threshold_changes = {}
+    for threshold_name in sorted(set(previous_thresholds) | set(current_thresholds)):
+        previous_value = previous_thresholds.get(threshold_name)
+        current_value = current_thresholds.get(threshold_name)
+        threshold_changes[threshold_name] = {
+            "previous": previous_value,
+            "current": current_value,
+            "changed": previous_value != current_value,
+        }
+
+    previous_inventory = _spark_output_inventory(previous_manifest)
+    current_inventory = _spark_output_inventory(current_manifest)
+    output_checksum_changes = {}
+    for output_name in sorted(set(previous_inventory) | set(current_inventory)):
+        previous_stats = previous_inventory.get(output_name, {})
+        current_stats = current_inventory.get(output_name, {})
+        if not isinstance(previous_stats, dict):
+            previous_stats = {}
+        if not isinstance(current_stats, dict):
+            current_stats = {}
+        previous_sha = previous_stats.get("sha256")
+        current_sha = current_stats.get("sha256")
+        output_checksum_changes[output_name] = {
+            "previous_sha256": previous_sha,
+            "current_sha256": current_sha,
+            "sha256_changed": previous_sha != current_sha,
+        }
+
+    return {
+        "version": 1,
+        "previous_manifest_available": True,
+        "previous_completed_at_utc": previous_manifest.get("run", {}).get(
+            "completed_at_utc"
+        ),
+        "current_completed_at_utc": current_manifest.get("run", {}).get(
+            "completed_at_utc"
+        ),
+        "source_sha256_changed": (
+            previous_manifest.get("source", {}).get("sha256")
+            != current_manifest.get("source", {}).get("sha256")
+        ),
+        "config_sha256_changed": (
+            previous_manifest.get("run", {}).get("config_sha256")
+            != current_manifest.get("run", {}).get("config_sha256")
+        ),
+        "config_scope_changes": {
+            "included_statuses": {
+                "previous": previous_statuses,
+                "current": current_statuses,
+                "added": sorted(set(current_statuses) - set(previous_statuses)),
+                "removed": sorted(set(previous_statuses) - set(current_statuses)),
+                "changed": previous_statuses != current_statuses,
+            },
+            "order_date_window": {
+                "previous": previous_window,
+                "current": current_window,
+                "changed": previous_window != current_window,
+            },
+            "warning_thresholds": threshold_changes,
+        },
+        "output_row_deltas": output_row_deltas,
+        "output_checksum_changes": output_checksum_changes,
     }
 
 
@@ -375,6 +532,14 @@ def run_spark_silver_pipeline(config_path):
             output_inventory=output_inventory,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
+        previous_manifest, previous_manifest_unavailable_reason = (
+            load_previous_run_manifest(manifest_path)
+        )
+        manifest["run_comparison"] = build_spark_run_comparison(
+            manifest,
+            previous_manifest=previous_manifest,
+            unavailable_reason=previous_manifest_unavailable_reason,
+        )
         write_json(manifest_path, manifest)
         return {
             "silver_path": str(silver_path),

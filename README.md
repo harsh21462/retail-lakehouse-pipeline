@@ -126,10 +126,13 @@ retail-lakehouse-pipeline/
    failed Spark write preserves the previous published output set.
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
-   environment details, row counts, the Spark reconciliation result, and the
-   Spark output schema-contract validation result. The Spark manifest also
-   records an output inventory with file counts, byte sizes, and deterministic
-   SHA-256 checksums for the emitted Parquet directories.
+   environment details, row counts, configured warning thresholds, the Spark
+   reconciliation result, and the Spark output schema-contract validation
+   result. The Spark manifest also records an output inventory with file
+   counts, byte sizes, and deterministic SHA-256 checksums for the emitted
+   Parquet directories, plus a run-to-run comparison against the previous Spark
+   manifest for source/config checksum drift, output row-count deltas, config
+   scope changes, and output checksum changes.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -272,6 +275,11 @@ which prevents an ordinary Spark write failure from deleting the previous
 complete output. After both outputs are published, the manifest records file
 counts, byte sizes, and deterministic SHA-256 checksums for the Spark Parquet
 directories so scheduled runs can detect missing or changed output artifacts.
+When a previous Spark manifest exists, the new run comparison records output
+row-count deltas, source/config checksum changes, included-status and date
+window drift, warning-threshold changes, and output checksum changes; malformed
+or missing previous manifests are reported as unavailable instead of failing a
+valid Spark publish.
 The Spark session is stopped in a `finally` block so failed reconciliations,
 contract checks, or writes do not leak a live session in scheduled environments.
 

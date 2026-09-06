@@ -361,6 +361,7 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": None, "end": None},
+        "warning_thresholds": {},
     }
     assert manifest["outputs"] == {
         "silver_orders": {
@@ -406,6 +407,177 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
                 "unexpected_columns": [],
                 "order_matches": True,
             },
+        },
+    }
+    assert manifest["run_comparison"] == {
+        "version": 1,
+        "previous_manifest_available": False,
+        "unavailable_reason": "not_found",
+    }
+
+
+def test_spark_run_comparison_reports_output_and_config_deltas():
+    previous_manifest = {
+        "run": {
+            "completed_at_utc": "2026-08-01T00:00:00Z",
+            "config_sha256": "old-config",
+        },
+        "source": {"sha256": "old-source"},
+        "config": {
+            "included_statuses": ["cancelled", "delivered"],
+            "order_date_window": {"start": "2026-07-01", "end": "2026-07-31"},
+            "warning_thresholds": {
+                "max_rejection_rate": 0.25,
+                "min_silver_rows": 10,
+            },
+        },
+        "outputs": {
+            "silver_orders": {"rows": 12},
+            "rejected_orders": {"rows": 3},
+        },
+        "output_inventory": {
+            "silver_orders": {"sha256": "old-silver"},
+            "rejected_orders": {"sha256": "same-rejected"},
+        },
+    }
+    current_manifest = {
+        "run": {
+            "completed_at_utc": "2026-08-02T00:00:00Z",
+            "config_sha256": "new-config",
+        },
+        "source": {"sha256": "new-source"},
+        "config": {
+            "included_statuses": ["delivered", "returned"],
+            "order_date_window": {"start": "2026-07-01", "end": "2026-08-01"},
+            "warning_thresholds": {
+                "max_rejection_rate": 0.2,
+                "max_source_lag_days": 7,
+            },
+        },
+        "outputs": {
+            "silver_orders": {"rows": 10},
+            "rejected_orders": {"rows": 5},
+        },
+        "output_inventory": {
+            "silver_orders": {"sha256": "new-silver"},
+            "rejected_orders": {"sha256": "same-rejected"},
+        },
+    }
+
+    comparison = spark_pipeline.build_spark_run_comparison(
+        current_manifest,
+        previous_manifest,
+    )
+
+    assert comparison == {
+        "version": 1,
+        "previous_manifest_available": True,
+        "previous_completed_at_utc": "2026-08-01T00:00:00Z",
+        "current_completed_at_utc": "2026-08-02T00:00:00Z",
+        "source_sha256_changed": True,
+        "config_sha256_changed": True,
+        "config_scope_changes": {
+            "included_statuses": {
+                "previous": ["cancelled", "delivered"],
+                "current": ["delivered", "returned"],
+                "added": ["returned"],
+                "removed": ["cancelled"],
+                "changed": True,
+            },
+            "order_date_window": {
+                "previous": {"start": "2026-07-01", "end": "2026-07-31"},
+                "current": {"start": "2026-07-01", "end": "2026-08-01"},
+                "changed": True,
+            },
+            "warning_thresholds": {
+                "max_rejection_rate": {
+                    "previous": 0.25,
+                    "current": 0.2,
+                    "changed": True,
+                },
+                "max_source_lag_days": {
+                    "previous": None,
+                    "current": 7,
+                    "changed": True,
+                },
+                "min_silver_rows": {
+                    "previous": 10,
+                    "current": None,
+                    "changed": True,
+                },
+            },
+        },
+        "output_row_deltas": {
+            "rejected_orders": {"previous": 3, "current": 5, "delta": 2},
+            "silver_orders": {"previous": 12, "current": 10, "delta": -2},
+        },
+        "output_checksum_changes": {
+            "rejected_orders": {
+                "previous_sha256": "same-rejected",
+                "current_sha256": "same-rejected",
+                "sha256_changed": False,
+            },
+            "silver_orders": {
+                "previous_sha256": "old-silver",
+                "current_sha256": "new-silver",
+                "sha256_changed": True,
+            },
+        },
+    }
+
+
+def test_spark_run_comparison_tolerates_missing_previous_manifest():
+    comparison = spark_pipeline.build_spark_run_comparison(
+        {},
+        unavailable_reason="invalid_json",
+    )
+
+    assert comparison == {
+        "version": 1,
+        "previous_manifest_available": False,
+        "unavailable_reason": "invalid_json",
+    }
+
+
+def test_spark_run_comparison_tolerates_malformed_sections():
+    comparison = spark_pipeline.build_spark_run_comparison(
+        {
+            "run": {"config_sha256": "current-config"},
+            "source": {"sha256": "current-source"},
+            "config": {"included_statuses": ["delivered"]},
+            "outputs": {"silver_orders": {"rows": 2}},
+            "output_inventory": {"silver_orders": {"sha256": "current-silver"}},
+        },
+        {
+            "run": {"config_sha256": "previous-config"},
+            "source": {"sha256": "previous-source"},
+            "config": ["not", "an", "object"],
+            "outputs": ["not", "an", "object"],
+            "output_inventory": ["not", "an", "object"],
+        },
+    )
+
+    assert comparison["previous_manifest_available"] is True
+    assert comparison["config_scope_changes"]["included_statuses"] == {
+        "previous": [],
+        "current": ["delivered"],
+        "added": ["delivered"],
+        "removed": [],
+        "changed": True,
+    }
+    assert comparison["config_scope_changes"]["order_date_window"] == {
+        "previous": {"start": None, "end": None},
+        "current": {"start": None, "end": None},
+        "changed": False,
+    }
+    assert comparison["output_row_deltas"] == {
+        "silver_orders": {"previous": None, "current": 2, "delta": None},
+    }
+    assert comparison["output_checksum_changes"] == {
+        "silver_orders": {
+            "previous_sha256": None,
+            "current_sha256": "current-silver",
+            "sha256_changed": True,
         },
     }
 
