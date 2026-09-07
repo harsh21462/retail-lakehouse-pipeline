@@ -10,6 +10,7 @@ try:
         build_runtime_environment,
         build_artifact_inventory,
         build_file_audit,
+        build_health_threshold_breaches,
         DEFAULT_CONFIG_PATH,
         file_sha256,
         load_previous_run_manifest,
@@ -26,6 +27,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         build_runtime_environment,
         build_artifact_inventory,
         build_file_audit,
+        build_health_threshold_breaches,
         DEFAULT_CONFIG_PATH,
         file_sha256,
         load_previous_run_manifest,
@@ -170,6 +172,129 @@ def build_spark_row_count_reconciliation(raw_orders_df, silver_df, rejected_df):
     }
 
 
+def _parse_order_date(value):
+    if value is None:
+        return None
+    if hasattr(value, "date"):
+        value = value.date()
+    if hasattr(value, "isoformat"):
+        value = value.isoformat()
+    return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def get_latest_spark_order_date(raw_orders_df):
+    latest_rows = raw_orders_df.selectExpr(
+        "max(order_date) as latest_order_date"
+    ).collect()
+    if not latest_rows:
+        return None
+    latest_row = latest_rows[0]
+    try:
+        latest_value = latest_row["latest_order_date"]
+    except (KeyError, TypeError):
+        latest_value = getattr(latest_row, "latest_order_date", None)
+    return _parse_order_date(latest_value)
+
+
+def build_spark_health_warnings(
+    *,
+    bronze_count,
+    silver_count,
+    rejected_count,
+    latest_order_date=None,
+    warning_thresholds=None,
+    as_of_date=None,
+):
+    warning_thresholds = warning_thresholds or {}
+    warnings = []
+    if as_of_date is None:
+        as_of_date = datetime.now(timezone.utc).date()
+
+    if "max_rejection_rate" in warning_thresholds:
+        threshold = warning_thresholds["max_rejection_rate"]
+        rejection_rate = rejected_count / bronze_count if bronze_count else 0
+        if rejection_rate > threshold:
+            warnings.append(
+                {
+                    "name": "rejection_rate_above_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Rejected row rate exceeded configured warning threshold"
+                    ),
+                    "observed": {
+                        "bronze_rows": bronze_count,
+                        "rejected_rows": rejected_count,
+                        "rejection_rate": round(rejection_rate, 6),
+                    },
+                    "threshold": {"max_rejection_rate": threshold},
+                }
+            )
+
+    if "min_silver_rows" in warning_thresholds:
+        threshold = warning_thresholds["min_silver_rows"]
+        if silver_count < threshold:
+            warnings.append(
+                {
+                    "name": "silver_rows_below_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Silver row count fell below configured warning threshold"
+                    ),
+                    "observed": {"silver_rows": silver_count},
+                    "threshold": {"min_silver_rows": threshold},
+                }
+            )
+
+    if latest_order_date is not None and "max_source_lag_days" in warning_thresholds:
+        threshold = warning_thresholds["max_source_lag_days"]
+        source_lag_days = (as_of_date - latest_order_date).days
+        if source_lag_days > threshold:
+            warnings.append(
+                {
+                    "name": "source_lag_above_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Latest source order date is older than configured "
+                        "freshness threshold"
+                    ),
+                    "observed": {
+                        "latest_order_date": latest_order_date.isoformat(),
+                        "as_of_date": as_of_date.isoformat(),
+                        "source_lag_days": source_lag_days,
+                    },
+                    "threshold": {"max_source_lag_days": threshold},
+                }
+            )
+
+    if (
+        latest_order_date is not None
+        and "max_future_order_date_days" in warning_thresholds
+    ):
+        threshold = warning_thresholds["max_future_order_date_days"]
+        future_order_date_days = (latest_order_date - as_of_date).days
+        if future_order_date_days > threshold:
+            warnings.append(
+                {
+                    "name": "future_order_date_above_threshold",
+                    "severity": "warning",
+                    "message": (
+                        "Latest source order date is farther in the future "
+                        "than configured warning threshold"
+                    ),
+                    "observed": {
+                        "latest_order_date": latest_order_date.isoformat(),
+                        "as_of_date": as_of_date.isoformat(),
+                        "future_order_date_days": future_order_date_days,
+                    },
+                    "threshold": {
+                        "max_future_order_date_days": threshold
+                    },
+                }
+            )
+
+    return warnings
+
+
 def build_spark_output_contract_validation(outputs):
     validations = {}
     for artifact_name, payload in outputs.items():
@@ -250,6 +375,7 @@ def build_spark_manifest(
     reconciliation,
     output_contract_validation,
     output_inventory,
+    health_warnings,
 ):
     output_paths = {
         "silver_orders": processed_dir / "spark_silver_orders",
@@ -298,6 +424,14 @@ def build_spark_manifest(
             },
         },
         "output_inventory": output_inventory,
+        "health": {
+            "status": "warning" if health_warnings else "passed",
+            "warnings": health_warnings,
+            "warning_count": len(health_warnings),
+            "threshold_breaches": build_health_threshold_breaches(
+                health_warnings
+            ),
+        },
         "reconciliation": reconciliation,
         "schema_contract_validation": output_contract_validation,
     }
@@ -359,6 +493,21 @@ def _spark_output_inventory(manifest):
     if not isinstance(inventory, dict):
         return {}
     return inventory
+
+
+def _spark_health(manifest):
+    health = manifest.get("health", {})
+    if not isinstance(health, dict):
+        return {}
+    return health
+
+
+def _spark_health_status(manifest):
+    return _spark_health(manifest).get("status")
+
+
+def _spark_warning_count(manifest):
+    return _spark_health(manifest).get("warning_count")
 
 
 def build_spark_run_comparison(
@@ -452,6 +601,14 @@ def build_spark_run_comparison(
             },
             "warning_thresholds": threshold_changes,
         },
+        "health_status_changed": (
+            _spark_health_status(previous_manifest)
+            != _spark_health_status(current_manifest)
+        ),
+        "warning_count_delta": _delta(
+            _spark_warning_count(previous_manifest),
+            _spark_warning_count(current_manifest),
+        ),
         "output_row_deltas": output_row_deltas,
         "output_checksum_changes": output_checksum_changes,
     }
@@ -481,6 +638,22 @@ def run_spark_silver_pipeline(config_path):
             rejected_df,
         )
         raise_for_failed_reconciliation(reconciliation)
+        latest_order_date = None
+        if (
+            "max_source_lag_days" in config["warning_thresholds"]
+            or "max_future_order_date_days" in config["warning_thresholds"]
+        ):
+            latest_order_date = get_latest_spark_order_date(raw_orders_df)
+        health_warnings = build_spark_health_warnings(
+            bronze_count=reconciliation["bronze_rows"],
+            silver_count=reconciliation["silver_rows"],
+            rejected_count=reconciliation["rejected_rows"],
+            latest_order_date=latest_order_date,
+            warning_thresholds=config["warning_thresholds"],
+            as_of_date=started_at.date(),
+        )
+        for warning in health_warnings:
+            LOGGER.warning("%s: %s", warning["name"], warning["message"])
         output_contract_validation = build_spark_output_contract_validation(
             {
                 "silver_orders": {
@@ -530,6 +703,7 @@ def run_spark_silver_pipeline(config_path):
             reconciliation=reconciliation,
             output_contract_validation=output_contract_validation,
             output_inventory=output_inventory,
+            health_warnings=health_warnings,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         previous_manifest, previous_manifest_unavailable_reason = (

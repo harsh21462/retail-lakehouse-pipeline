@@ -127,6 +127,7 @@ retail-lakehouse-pipeline/
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
    environment details, row counts, configured warning thresholds, the Spark
+   health status with machine-readable warning-threshold breaches, the Spark
    reconciliation result, and the Spark output schema-contract validation
    result. The Spark manifest also records an output inventory with file
    counts, byte sizes, and deterministic SHA-256 checksums for the emitted
@@ -275,11 +276,15 @@ which prevents an ordinary Spark write failure from deleting the previous
 complete output. After both outputs are published, the manifest records file
 counts, byte sizes, and deterministic SHA-256 checksums for the Spark Parquet
 directories so scheduled runs can detect missing or changed output artifacts.
+The Spark manifest also evaluates the configured warning thresholds for
+rejection rate, minimum silver rows, stale source data, and future-dated source
+data, preserving the same warning names and threshold-breach shape used by the
+Python pipeline.
 When a previous Spark manifest exists, the new run comparison records output
 row-count deltas, source/config checksum changes, included-status and date
-window drift, warning-threshold changes, and output checksum changes; malformed
-or missing previous manifests are reported as unavailable instead of failing a
-valid Spark publish.
+window drift, warning-threshold changes, health status changes, warning-count
+deltas, and output checksum changes; malformed or missing previous manifests
+are reported as unavailable instead of failing a valid Spark publish.
 The Spark session is stopped in a `finally` block so failed reconciliations,
 contract checks, or writes do not leak a live session in scheduled environments.
 

@@ -221,6 +221,84 @@ def test_spark_row_count_reconciliation_reports_accounted_rows():
     }
 
 
+def test_spark_health_warnings_match_pipeline_threshold_shape():
+    warnings = spark_pipeline.build_spark_health_warnings(
+        bronze_count=4,
+        silver_count=1,
+        rejected_count=3,
+        latest_order_date=spark_pipeline._parse_order_date("2026-08-01"),
+        warning_thresholds={
+            "max_rejection_rate": 0.5,
+            "min_silver_rows": 2,
+            "max_source_lag_days": 7,
+        },
+        as_of_date=spark_pipeline._parse_order_date("2026-08-15"),
+    )
+
+    assert warnings == [
+        {
+            "name": "rejection_rate_above_threshold",
+            "severity": "warning",
+            "message": "Rejected row rate exceeded configured warning threshold",
+            "observed": {
+                "bronze_rows": 4,
+                "rejected_rows": 3,
+                "rejection_rate": 0.75,
+            },
+            "threshold": {"max_rejection_rate": 0.5},
+        },
+        {
+            "name": "silver_rows_below_threshold",
+            "severity": "warning",
+            "message": "Silver row count fell below configured warning threshold",
+            "observed": {"silver_rows": 1},
+            "threshold": {"min_silver_rows": 2},
+        },
+        {
+            "name": "source_lag_above_threshold",
+            "severity": "warning",
+            "message": (
+                "Latest source order date is older than configured "
+                "freshness threshold"
+            ),
+            "observed": {
+                "latest_order_date": "2026-08-01",
+                "as_of_date": "2026-08-15",
+                "source_lag_days": 14,
+            },
+            "threshold": {"max_source_lag_days": 7},
+        },
+    ]
+
+
+def test_spark_health_warnings_report_future_dated_source_data():
+    warnings = spark_pipeline.build_spark_health_warnings(
+        bronze_count=2,
+        silver_count=2,
+        rejected_count=0,
+        latest_order_date=spark_pipeline._parse_order_date("2026-08-20"),
+        warning_thresholds={"max_future_order_date_days": 2},
+        as_of_date=spark_pipeline._parse_order_date("2026-08-15"),
+    )
+
+    assert warnings == [
+        {
+            "name": "future_order_date_above_threshold",
+            "severity": "warning",
+            "message": (
+                "Latest source order date is farther in the future "
+                "than configured warning threshold"
+            ),
+            "observed": {
+                "latest_order_date": "2026-08-20",
+                "as_of_date": "2026-08-15",
+                "future_order_date_days": 5,
+            },
+            "threshold": {"max_future_order_date_days": 2},
+        },
+    ]
+
+
 def test_spark_output_contract_validation_detects_column_drift():
     validation = spark_pipeline.build_spark_output_contract_validation(
         {
@@ -385,6 +463,12 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         assert artifact_stats["files"] == 1
         assert artifact_stats["bytes"] > 0
         assert artifact_stats["sha256"]
+    assert manifest["health"] == {
+        "status": "passed",
+        "warnings": [],
+        "warning_count": 0,
+        "threshold_breaches": [],
+    }
     assert manifest["reconciliation"] == result["reconciliation"]
     assert manifest["schema_contract_validation"] == {
         "version": 1,
@@ -439,6 +523,7 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
             "silver_orders": {"sha256": "old-silver"},
             "rejected_orders": {"sha256": "same-rejected"},
         },
+        "health": {"status": "passed", "warning_count": 0},
     }
     current_manifest = {
         "run": {
@@ -462,6 +547,7 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
             "silver_orders": {"sha256": "new-silver"},
             "rejected_orders": {"sha256": "same-rejected"},
         },
+        "health": {"status": "warning", "warning_count": 2},
     }
 
     comparison = spark_pipeline.build_spark_run_comparison(
@@ -507,6 +593,8 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
                 },
             },
         },
+        "health_status_changed": True,
+        "warning_count_delta": 2,
         "output_row_deltas": {
             "rejected_orders": {"previous": 3, "current": 5, "delta": 2},
             "silver_orders": {"previous": 12, "current": 10, "delta": -2},
