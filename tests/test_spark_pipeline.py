@@ -18,6 +18,7 @@ class FakeDataFrame:
         self.calls = calls or []
         self.count_value = count_value
         self.columns = columns or []
+        self.temp_view_name = None
 
     def where(self, expression):
         return FakeDataFrame([*self.calls, ("where", expression)], self.count_value)
@@ -39,6 +40,9 @@ class FakeDataFrame:
 
     def count(self):
         return self.count_value
+
+    def createOrReplaceTempView(self, name):
+        self.temp_view_name = name
 
 
 class FakeDataFrameWriter:
@@ -89,9 +93,27 @@ class FakeSparkSession:
     reader = None
     app_name = None
     stop_count = 0
+    sql_queries = []
+    written_paths = []
 
     def __init__(self):
         self.read = self.reader
+
+    def sql(self, query):
+        type(self).sql_queries.append(query)
+        if "from rejected_orders" in query:
+            columns = spark_pipeline.GOLD_REJECTION_FIELDS
+        elif "group by customer_id" in query:
+            columns = spark_pipeline.GOLD_CUSTOMER_FIELDS
+        elif "group by category" in query:
+            columns = spark_pipeline.GOLD_CATEGORY_FIELDS
+        else:
+            columns = spark_pipeline.GOLD_REVENUE_FIELDS
+        return FakeWritableDataFrame(
+            1,
+            type(self).written_paths,
+            columns=columns,
+        )
 
     def stop(self):
         type(self).stop_count += 1
@@ -336,6 +358,53 @@ def test_spark_output_contract_validation_detects_column_drift():
         spark_pipeline.raise_for_failed_spark_output_contract_validation(validation)
 
 
+def test_spark_gold_dataframes_run_checked_in_sql_models():
+    spark = FakeSparkSession()
+    FakeSparkSession.sql_queries = []
+    FakeSparkSession.written_paths = []
+    silver_df = FakeDataFrame(columns=spark_pipeline.SILVER_COLUMNS)
+    rejected_df = FakeDataFrame(columns=spark_pipeline.REJECTED_COLUMNS)
+
+    outputs = spark_pipeline.build_spark_gold_dataframes(
+        spark,
+        silver_df,
+        rejected_df,
+    )
+
+    assert silver_df.temp_view_name == "silver_orders"
+    assert rejected_df.temp_view_name == "rejected_orders"
+    assert list(outputs) == [
+        "gold_revenue_metrics",
+        "gold_customer_metrics",
+        "gold_category_metrics",
+        "gold_rejection_metrics",
+    ]
+    assert outputs["gold_revenue_metrics"]["expected_columns"] == (
+        spark_pipeline.GOLD_REVENUE_FIELDS
+    )
+    assert outputs["gold_customer_metrics"]["expected_columns"] == (
+        spark_pipeline.GOLD_CUSTOMER_FIELDS
+    )
+    assert outputs["gold_category_metrics"]["expected_columns"] == (
+        spark_pipeline.GOLD_CATEGORY_FIELDS
+    )
+    assert outputs["gold_rejection_metrics"]["expected_columns"] == (
+        spark_pipeline.GOLD_REJECTION_FIELDS
+    )
+    assert FakeSparkSession.sql_queries == [
+        spark_pipeline._read_spark_sql_model(spark_pipeline.GOLD_SQL_PATH),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_CUSTOMER_SQL_PATH
+        ),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_CATEGORY_SQL_PATH
+        ),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_REJECTION_SQL_PATH
+        ),
+    ]
+
+
 def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     raw_path = tmp_path / "raw" / "orders.csv"
     processed_dir = tmp_path / "processed"
@@ -370,6 +439,8 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     FakeSparkSession.reader = FakeSparkReader(raw_df)
     FakeSparkSession.app_name = None
     FakeSparkSession.stop_count = 0
+    FakeSparkSession.sql_queries = []
+    FakeSparkSession.written_paths = written_paths
 
     monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
     monkeypatch.setattr(
@@ -396,7 +467,7 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
             "difference": 0,
         },
     }
-    assert len(written_paths) == 2
+    assert len(written_paths) == 6
     assert written_paths[0][0] == "overwrite"
     assert written_paths[1][0] == "overwrite"
     assert Path(written_paths[0][1]).name.startswith(".spark_silver_orders.staged.")
@@ -407,8 +478,32 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert (
         processed_dir / "spark_rejected_orders" / "part-00000.parquet"
     ).exists()
+    assert (
+        processed_dir / "spark_gold_revenue_metrics" / "part-00000.parquet"
+    ).exists()
+    assert (
+        processed_dir / "spark_gold_customer_metrics" / "part-00000.parquet"
+    ).exists()
+    assert (
+        processed_dir / "spark_gold_category_metrics" / "part-00000.parquet"
+    ).exists()
+    assert (
+        processed_dir / "spark_gold_rejection_metrics" / "part-00000.parquet"
+    ).exists()
     assert list(processed_dir.glob(".spark_*_orders.staged.*")) == []
     assert FakeSparkSession.stop_count == 1
+    assert FakeSparkSession.sql_queries == [
+        spark_pipeline._read_spark_sql_model(spark_pipeline.GOLD_SQL_PATH),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_CUSTOMER_SQL_PATH
+        ),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_CATEGORY_SQL_PATH
+        ),
+        spark_pipeline._read_spark_sql_model(
+            spark_pipeline.GOLD_REJECTION_SQL_PATH
+        ),
+    ]
 
     manifest = json.loads(
         (processed_dir / "spark_pipeline_manifest.json").read_text(
@@ -454,8 +549,32 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
             "columns": spark_pipeline.REJECTED_COLUMNS,
             "rows": 1,
         },
+        "gold_revenue_metrics": {
+            "path": str(processed_dir / "spark_gold_revenue_metrics"),
+            "format": "parquet",
+            "columns": spark_pipeline.GOLD_REVENUE_FIELDS,
+            "rows": 1,
+        },
+        "gold_customer_metrics": {
+            "path": str(processed_dir / "spark_gold_customer_metrics"),
+            "format": "parquet",
+            "columns": spark_pipeline.GOLD_CUSTOMER_FIELDS,
+            "rows": 1,
+        },
+        "gold_category_metrics": {
+            "path": str(processed_dir / "spark_gold_category_metrics"),
+            "format": "parquet",
+            "columns": spark_pipeline.GOLD_CATEGORY_FIELDS,
+            "rows": 1,
+        },
+        "gold_rejection_metrics": {
+            "path": str(processed_dir / "spark_gold_rejection_metrics"),
+            "format": "parquet",
+            "columns": spark_pipeline.GOLD_REJECTION_FIELDS,
+            "rows": 1,
+        },
     }
-    assert set(manifest["output_inventory"]) == {"silver_orders", "rejected_orders"}
+    assert set(manifest["output_inventory"]) == set(manifest["outputs"])
     for artifact_name, artifact_stats in manifest["output_inventory"].items():
         assert artifact_stats["path"] == manifest["outputs"][artifact_name]["path"]
         assert artifact_stats["exists"] is True
@@ -491,8 +610,58 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
                 "unexpected_columns": [],
                 "order_matches": True,
             },
+            "gold_revenue_metrics": {
+                "success": True,
+                "expected_columns": spark_pipeline.GOLD_REVENUE_FIELDS,
+                "actual_columns": spark_pipeline.GOLD_REVENUE_FIELDS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
+            "gold_customer_metrics": {
+                "success": True,
+                "expected_columns": spark_pipeline.GOLD_CUSTOMER_FIELDS,
+                "actual_columns": spark_pipeline.GOLD_CUSTOMER_FIELDS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
+            "gold_category_metrics": {
+                "success": True,
+                "expected_columns": spark_pipeline.GOLD_CATEGORY_FIELDS,
+                "actual_columns": spark_pipeline.GOLD_CATEGORY_FIELDS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
+            "gold_rejection_metrics": {
+                "success": True,
+                "expected_columns": spark_pipeline.GOLD_REJECTION_FIELDS,
+                "actual_columns": spark_pipeline.GOLD_REJECTION_FIELDS,
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "order_matches": True,
+            },
         },
     }
+    assert manifest["sql_models"] == spark_pipeline.build_sql_model_inventory(
+        {
+            "silver_orders": processed_dir / "spark_silver_orders",
+            "rejected_orders": processed_dir / "spark_rejected_orders",
+            "gold_revenue_metrics": (
+                processed_dir / "spark_gold_revenue_metrics"
+            ),
+            "gold_customer_metrics": (
+                processed_dir / "spark_gold_customer_metrics"
+            ),
+            "gold_category_metrics": (
+                processed_dir / "spark_gold_category_metrics"
+            ),
+            "gold_rejection_metrics": (
+                processed_dir / "spark_gold_rejection_metrics"
+            ),
+        }
+    )
     assert manifest["run_comparison"] == {
         "version": 1,
         "previous_manifest_available": False,

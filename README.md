@@ -113,27 +113,28 @@ retail-lakehouse-pipeline/
    interactive portfolio demos without changing the batch pipeline contract.
 15. Optionally schedule the same CLI entrypoint through the checked-in Airflow
    DAG in `dags/retail_lakehouse_dag.py`.
-16. Optionally run the Spark silver-layer adapter in `src/spark_pipeline.py`
+16. Optionally run the Spark lakehouse adapter in `src/spark_pipeline.py`
    when PySpark is installed. It uses the same config, status scope, date
    window semantics, silver columns, rejected-order columns, and rejection
    reasons as the Python pipeline, reconciles raw rows against Spark silver
-   plus rejected rows before publishing outputs, and writes Spark-managed
-   Parquet outputs under `spark_silver_orders/` and `spark_rejected_orders/`.
-   It validates the Spark DataFrame column contracts before any publish, so
-   schema drift fails the run instead of publishing incompatible Parquet.
+   plus rejected rows before publishing outputs, executes the checked-in gold
+   SQL models against Spark temp views, and writes Spark-managed Parquet
+   outputs for silver, rejected, revenue, customer, category, and rejection
+   metrics. It validates every Spark DataFrame column contract before any
+   publish, so schema drift fails the run instead of publishing incompatible Parquet.
    Spark Parquet directories are written to hidden sibling staging directories
-   first and swapped into place only after both output writes succeed, so a
+   first and swapped into place only after all output writes succeed, so a
    failed Spark write preserves the previous published output set.
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
    environment details, row counts, configured warning thresholds, the Spark
    health status with machine-readable warning-threshold breaches, the Spark
    reconciliation result, and the Spark output schema-contract validation
-   result. The Spark manifest also records an output inventory with file
-   counts, byte sizes, and deterministic SHA-256 checksums for the emitted
-   Parquet directories, plus a run-to-run comparison against the previous Spark
-   manifest for source/config checksum drift, output row-count deltas, config
-   scope changes, and output checksum changes.
+   result. The Spark manifest also records a SQL model inventory, an output
+   inventory with file counts, byte sizes, and deterministic SHA-256 checksums
+   for the emitted Parquet directories, plus a run-to-run comparison against
+   the previous Spark manifest for source/config checksum drift, output
+   row-count deltas, config scope changes, and output checksum changes.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -269,13 +270,14 @@ outputs, it also checks that the raw row count equals accepted plus rejected
 rows and fails the run if Spark did not account for every input row. Successful
 Spark runs emit `spark_pipeline_manifest.json` next to the Spark Parquet
 outputs. Before those outputs are published, the adapter validates that the
-silver and rejected-order DataFrame columns still match the published contracts
-and records the validation in the manifest. It writes both Spark outputs to
-hidden sibling staging directories before replacing the published directories,
-which prevents an ordinary Spark write failure from deleting the previous
-complete output. After both outputs are published, the manifest records file
-counts, byte sizes, and deterministic SHA-256 checksums for the Spark Parquet
-directories so scheduled runs can detect missing or changed output artifacts.
+silver, rejected-order, and gold metric DataFrame columns still match the
+published contracts and records the validation in the manifest. It writes all
+Spark outputs to hidden sibling staging directories before replacing the
+published directories, which prevents an ordinary Spark write failure from
+deleting the previous complete output. After all outputs are published, the
+manifest records file counts, byte sizes, and deterministic SHA-256 checksums
+for the Spark Parquet directories so scheduled runs can detect missing or
+changed output artifacts.
 The Spark manifest also evaluates the configured warning thresholds for
 rejection rate, minimum silver rows, stale source data, and future-dated source
 data, preserving the same warning names and threshold-breach shape used by the
@@ -388,6 +390,11 @@ Each successful run also writes:
   files for date-scoped silver reads.
 - `silver_orders_by_date_parquet/order_date=<YYYY-MM-DD>/silver_orders.parquet`
   partition files for columnar analytics reads.
+- Spark-managed Parquet directories under `spark_silver_orders/`,
+  `spark_rejected_orders/`, `spark_gold_revenue_metrics/`,
+  `spark_gold_customer_metrics/`, `spark_gold_category_metrics/`, and
+  `spark_gold_rejection_metrics/` when `src/spark_pipeline.py` is run with
+  PySpark installed.
 
 ## Streamlit Dashboard
 
@@ -421,7 +428,8 @@ before rows are partitioned or aggregated.
 ## Roadmap
 
 - [x] Add PySpark silver-layer adapter.
-- Add full PySpark orchestration for gold models and manifest parity.
+- [x] Add PySpark orchestration for gold models and manifest SQL model inventory.
+- Add remaining Spark manifest parity for metric reconciliation, lineage, and catalog handoffs.
 - [x] Add partitioned output.
 - [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.

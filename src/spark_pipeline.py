@@ -11,8 +11,17 @@ try:
         build_artifact_inventory,
         build_file_audit,
         build_health_threshold_breaches,
+        build_sql_model_inventory,
         DEFAULT_CONFIG_PATH,
         file_sha256,
+        GOLD_CATEGORY_FIELDS,
+        GOLD_CATEGORY_SQL_PATH,
+        GOLD_CUSTOMER_FIELDS,
+        GOLD_CUSTOMER_SQL_PATH,
+        GOLD_REJECTION_FIELDS,
+        GOLD_REJECTION_SQL_PATH,
+        GOLD_REVENUE_FIELDS,
+        GOLD_SQL_PATH,
         load_previous_run_manifest,
         load_config,
         make_staged_directory,
@@ -28,8 +37,17 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         build_artifact_inventory,
         build_file_audit,
         build_health_threshold_breaches,
+        build_sql_model_inventory,
         DEFAULT_CONFIG_PATH,
         file_sha256,
+        GOLD_CATEGORY_FIELDS,
+        GOLD_CATEGORY_SQL_PATH,
+        GOLD_CUSTOMER_FIELDS,
+        GOLD_CUSTOMER_SQL_PATH,
+        GOLD_REJECTION_FIELDS,
+        GOLD_REJECTION_SQL_PATH,
+        GOLD_REVENUE_FIELDS,
+        GOLD_SQL_PATH,
         load_previous_run_manifest,
         load_config,
         make_staged_directory,
@@ -332,6 +350,37 @@ def build_spark_output_contract_validation(outputs):
     }
 
 
+def _read_spark_sql_model(sql_path):
+    return Path(sql_path).read_text(encoding="utf-8").strip().rstrip(";")
+
+
+def build_spark_gold_dataframes(spark, silver_df, rejected_df):
+    silver_df.createOrReplaceTempView("silver_orders")
+    rejected_df.createOrReplaceTempView("rejected_orders")
+    return {
+        "gold_revenue_metrics": {
+            "dataframe": spark.sql(_read_spark_sql_model(GOLD_SQL_PATH)),
+            "expected_columns": GOLD_REVENUE_FIELDS,
+            "path_name": "spark_gold_revenue_metrics",
+        },
+        "gold_customer_metrics": {
+            "dataframe": spark.sql(_read_spark_sql_model(GOLD_CUSTOMER_SQL_PATH)),
+            "expected_columns": GOLD_CUSTOMER_FIELDS,
+            "path_name": "spark_gold_customer_metrics",
+        },
+        "gold_category_metrics": {
+            "dataframe": spark.sql(_read_spark_sql_model(GOLD_CATEGORY_SQL_PATH)),
+            "expected_columns": GOLD_CATEGORY_FIELDS,
+            "path_name": "spark_gold_category_metrics",
+        },
+        "gold_rejection_metrics": {
+            "dataframe": spark.sql(_read_spark_sql_model(GOLD_REJECTION_SQL_PATH)),
+            "expected_columns": GOLD_REJECTION_FIELDS,
+            "path_name": "spark_gold_rejection_metrics",
+        },
+    }
+
+
 def raise_for_failed_spark_output_contract_validation(validation):
     if not validation["success"]:
         raise ValueError(
@@ -376,11 +425,10 @@ def build_spark_manifest(
     output_contract_validation,
     output_inventory,
     health_warnings,
+    output_row_counts,
+    output_paths,
 ):
-    output_paths = {
-        "silver_orders": processed_dir / "spark_silver_orders",
-        "rejected_orders": processed_dir / "spark_rejected_orders",
-    }
+    output_paths = dict(output_paths)
     return {
         "version": 1,
         "engine": "spark",
@@ -410,20 +458,20 @@ def build_spark_manifest(
             "warning_thresholds": dict(config.get("warning_thresholds", {})),
         },
         "outputs": {
-            "silver_orders": {
-                "path": str(output_paths["silver_orders"]),
+            output_name: {
+                "path": str(output_path),
                 "format": "parquet",
-                "columns": list(SILVER_COLUMNS),
-                "rows": reconciliation["silver_rows"],
-            },
-            "rejected_orders": {
-                "path": str(output_paths["rejected_orders"]),
-                "format": "parquet",
-                "columns": list(REJECTED_COLUMNS),
-                "rows": reconciliation["rejected_rows"],
-            },
+                "columns": list(
+                    output_contract_validation["outputs"][output_name][
+                        "expected_columns"
+                    ]
+                ),
+                "rows": output_row_counts[output_name],
+            }
+            for output_name, output_path in output_paths.items()
         },
         "output_inventory": output_inventory,
+        "sql_models": build_sql_model_inventory(output_paths),
         "health": {
             "status": "warning" if health_warnings else "passed",
             "warnings": health_warnings,
@@ -654,41 +702,50 @@ def run_spark_silver_pipeline(config_path):
         )
         for warning in health_warnings:
             LOGGER.warning("%s: %s", warning["name"], warning["message"])
+        spark_outputs = {
+            "silver_orders": {
+                "dataframe": silver_df,
+                "expected_columns": SILVER_COLUMNS,
+                "path_name": "spark_silver_orders",
+            },
+            "rejected_orders": {
+                "dataframe": rejected_df,
+                "expected_columns": REJECTED_COLUMNS,
+                "path_name": "spark_rejected_orders",
+            },
+            **build_spark_gold_dataframes(spark, silver_df, rejected_df),
+        }
         output_contract_validation = build_spark_output_contract_validation(
-            {
-                "silver_orders": {
-                    "dataframe": silver_df,
-                    "expected_columns": SILVER_COLUMNS,
-                },
-                "rejected_orders": {
-                    "dataframe": rejected_df,
-                    "expected_columns": REJECTED_COLUMNS,
-                },
-            }
+            spark_outputs
         )
         raise_for_failed_spark_output_contract_validation(
             output_contract_validation
         )
-        silver_path = processed_dir / "spark_silver_orders"
-        rejected_path = processed_dir / "spark_rejected_orders"
+        output_paths = {
+            output_name: processed_dir / payload["path_name"]
+            for output_name, payload in spark_outputs.items()
+        }
+        output_row_counts = {
+            "silver_orders": reconciliation["silver_rows"],
+            "rejected_orders": reconciliation["rejected_rows"],
+        }
+        output_row_counts.update(
+            {
+                output_name: payload["dataframe"].count()
+                for output_name, payload in spark_outputs.items()
+                if output_name not in output_row_counts
+            }
+        )
         write_spark_parquet_outputs(
             {
-                "silver_orders": {
-                    "dataframe": silver_df,
-                    "path": silver_path,
-                },
-                "rejected_orders": {
-                    "dataframe": rejected_df,
-                    "path": rejected_path,
-                },
+                output_name: {
+                    "dataframe": payload["dataframe"],
+                    "path": output_paths[output_name],
+                }
+                for output_name, payload in spark_outputs.items()
             }
         )
-        output_inventory = build_artifact_inventory(
-            {
-                "silver_orders": silver_path,
-                "rejected_orders": rejected_path,
-            }
-        )
+        output_inventory = build_artifact_inventory(output_paths)
         completed_at_utc = (
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
@@ -704,6 +761,8 @@ def run_spark_silver_pipeline(config_path):
             output_contract_validation=output_contract_validation,
             output_inventory=output_inventory,
             health_warnings=health_warnings,
+            output_row_counts=output_row_counts,
+            output_paths=output_paths,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         previous_manifest, previous_manifest_unavailable_reason = (
@@ -716,8 +775,8 @@ def run_spark_silver_pipeline(config_path):
         )
         write_json(manifest_path, manifest)
         return {
-            "silver_path": str(silver_path),
-            "rejected_path": str(rejected_path),
+            "silver_path": str(output_paths["silver_orders"]),
+            "rejected_path": str(output_paths["rejected_orders"]),
             "manifest_path": str(manifest_path),
             "reconciliation": reconciliation,
         }
