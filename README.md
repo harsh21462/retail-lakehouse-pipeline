@@ -135,6 +135,9 @@ retail-lakehouse-pipeline/
    for the emitted Parquet directories, plus a run-to-run comparison against
    the previous Spark manifest for source/config checksum drift, output
    row-count deltas, config scope changes, and output checksum changes.
+   Spark also reconciles gold order, unit, and revenue aggregates back to the
+   Spark silver and rejected-order DataFrames before publishing Parquet
+   outputs, so SQL model drift fails the run before replacing published data.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -278,6 +281,9 @@ deleting the previous complete output. After all outputs are published, the
 manifest records file counts, byte sizes, and deterministic SHA-256 checksums
 for the Spark Parquet directories so scheduled runs can detect missing or
 changed output artifacts.
+Before publish, Spark metric reconciliation verifies that revenue, customer,
+and category gold aggregates match accepted silver orders and that rejection
+metrics match rejected-order audit totals.
 The Spark manifest also evaluates the configured warning thresholds for
 rejection rate, minimum silver rows, stale source data, and future-dated source
 data, preserving the same warning names and threshold-breach shape used by the
@@ -429,7 +435,7 @@ before rows are partitioned or aggregated.
 
 - [x] Add PySpark silver-layer adapter.
 - [x] Add PySpark orchestration for gold models and manifest SQL model inventory.
-- Add remaining Spark manifest parity for metric reconciliation, lineage, and catalog handoffs.
+- Add remaining Spark manifest parity for lineage and catalog handoffs.
 - [x] Add partitioned output.
 - [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.

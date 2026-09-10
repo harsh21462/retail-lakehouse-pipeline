@@ -14,19 +14,31 @@ class FakeFunctions:
 
 
 class FakeDataFrame:
-    def __init__(self, calls=None, count_value=0, columns=None):
+    def __init__(
+        self,
+        calls=None,
+        count_value=0,
+        columns=None,
+        aggregate_row=None,
+    ):
         self.calls = calls or []
         self.count_value = count_value
         self.columns = columns or []
+        self.aggregate_row = aggregate_row
         self.temp_view_name = None
 
     def where(self, expression):
-        return FakeDataFrame([*self.calls, ("where", expression)], self.count_value)
+        return FakeDataFrame(
+            [*self.calls, ("where", expression)],
+            self.count_value,
+            aggregate_row=self.aggregate_row,
+        )
 
     def selectExpr(self, *expressions):
         return FakeDataFrame(
             [*self.calls, ("selectExpr", expressions)],
             self.count_value,
+            aggregate_row=self.aggregate_row,
         )
 
     def withColumn(self, name, expression):
@@ -40,6 +52,11 @@ class FakeDataFrame:
 
     def count(self):
         return self.count_value
+
+    def collect(self):
+        if self.aggregate_row is None:
+            return []
+        return [self.aggregate_row]
 
     def createOrReplaceTempView(self, name):
         self.temp_view_name = name
@@ -70,8 +87,12 @@ class FailingDataFrameWriter(FakeDataFrameWriter):
 
 
 class FakeWritableDataFrame(FakeDataFrame):
-    def __init__(self, count_value, written_paths, columns=None):
-        super().__init__(count_value=count_value, columns=columns)
+    def __init__(self, count_value, written_paths, columns=None, aggregate_row=None):
+        super().__init__(
+            count_value=count_value,
+            columns=columns,
+            aggregate_row=aggregate_row,
+        )
         self.write = FakeDataFrameWriter(written_paths)
 
 
@@ -103,16 +124,21 @@ class FakeSparkSession:
         type(self).sql_queries.append(query)
         if "from rejected_orders" in query:
             columns = spark_pipeline.GOLD_REJECTION_FIELDS
+            aggregate_row = {"orders": 1, "units": 1, "revenue": 800.0}
         elif "group by customer_id" in query:
             columns = spark_pipeline.GOLD_CUSTOMER_FIELDS
+            aggregate_row = {"orders": 2, "units": 4, "revenue": 8000.0}
         elif "group by category" in query:
             columns = spark_pipeline.GOLD_CATEGORY_FIELDS
+            aggregate_row = {"orders": 2, "units": 4, "revenue": 8000.0}
         else:
             columns = spark_pipeline.GOLD_REVENUE_FIELDS
+            aggregate_row = {"orders": 2, "units": 4, "revenue": 8000.0}
         return FakeWritableDataFrame(
             1,
             type(self).written_paths,
             columns=columns,
+            aggregate_row=aggregate_row,
         )
 
     def stop(self):
@@ -430,11 +456,13 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         2,
         written_paths,
         columns=spark_pipeline.SILVER_COLUMNS,
+        aggregate_row={"orders": 2, "units": 4, "revenue": 8000.0},
     )
     rejected_df = FakeWritableDataFrame(
         1,
         written_paths,
         columns=spark_pipeline.REJECTED_COLUMNS,
+        aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
     )
     FakeSparkSession.reader = FakeSparkReader(raw_df)
     FakeSparkSession.app_name = None
@@ -589,6 +617,97 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         "threshold_breaches": [],
     }
     assert manifest["reconciliation"] == result["reconciliation"]
+    assert manifest["metric_reconciliation"] == {
+        "version": 1,
+        "success": True,
+        "failed_checks": [],
+        "checks": [
+            {
+                "name": "gold_revenue_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_revenue_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_revenue_amount_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_customer_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_customer_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_customer_revenue_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_category_orders_match_silver",
+                "success": True,
+                "expected": 2,
+                "actual": 2,
+                "difference": 0,
+            },
+            {
+                "name": "gold_category_units_match_silver",
+                "success": True,
+                "expected": 4,
+                "actual": 4,
+                "difference": 0,
+            },
+            {
+                "name": "gold_category_revenue_match_silver",
+                "success": True,
+                "expected": 8000.0,
+                "actual": 8000.0,
+                "difference": 0.0,
+            },
+            {
+                "name": "gold_rejection_orders_match_rejected",
+                "success": True,
+                "expected": 1,
+                "actual": 1,
+                "difference": 0,
+            },
+            {
+                "name": "gold_rejection_units_match_rejected",
+                "success": True,
+                "expected": 1,
+                "actual": 1,
+                "difference": 0,
+            },
+            {
+                "name": "gold_rejection_revenue_match_rejected",
+                "success": True,
+                "expected": 800.0,
+                "actual": 800.0,
+                "difference": 0.0,
+            },
+        ],
+    }
     assert manifest["schema_contract_validation"] == {
         "version": 1,
         "success": True,
@@ -667,6 +786,82 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         "previous_manifest_available": False,
         "unavailable_reason": "not_found",
     }
+
+
+def test_spark_metric_reconciliation_detects_gold_aggregate_drift():
+    written_paths = []
+    silver_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.SILVER_COLUMNS,
+        aggregate_row={"orders": 1, "units": 2, "revenue": 3000.0},
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+        aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
+    )
+    spark_outputs = {
+        "gold_revenue_metrics": {
+            "dataframe": FakeWritableDataFrame(
+                1,
+                written_paths,
+                columns=spark_pipeline.GOLD_REVENUE_FIELDS,
+                aggregate_row={"orders": 1, "units": 2, "revenue": 2999.0},
+            ),
+        },
+        "gold_customer_metrics": {
+            "dataframe": FakeWritableDataFrame(
+                1,
+                written_paths,
+                columns=spark_pipeline.GOLD_CUSTOMER_FIELDS,
+                aggregate_row={"orders": 1, "units": 2, "revenue": 3000.0},
+            ),
+        },
+        "gold_category_metrics": {
+            "dataframe": FakeWritableDataFrame(
+                1,
+                written_paths,
+                columns=spark_pipeline.GOLD_CATEGORY_FIELDS,
+                aggregate_row={"orders": 1, "units": 2, "revenue": 3000.0},
+            ),
+        },
+        "gold_rejection_metrics": {
+            "dataframe": FakeWritableDataFrame(
+                1,
+                written_paths,
+                columns=spark_pipeline.GOLD_REJECTION_FIELDS,
+                aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
+            ),
+        },
+    }
+
+    reconciliation = spark_pipeline.build_spark_metric_reconciliation(
+        silver_df,
+        rejected_df,
+        spark_outputs,
+    )
+
+    assert reconciliation["success"] is False
+    assert reconciliation["failed_checks"] == [
+        "gold_revenue_amount_match_silver"
+    ]
+    failed_check = {
+        check["name"]: check for check in reconciliation["checks"]
+    }["gold_revenue_amount_match_silver"]
+    assert failed_check == {
+        "name": "gold_revenue_amount_match_silver",
+        "success": False,
+        "expected": 3000.0,
+        "actual": 2999.0,
+        "difference": 1.0,
+    }
+    with pytest.raises(
+        ValueError,
+        match="Metric reconciliation failed: gold_revenue_amount_match_silver",
+    ):
+        spark_pipeline.raise_for_failed_metric_reconciliation(reconciliation)
 
 
 def test_spark_run_comparison_reports_output_and_config_deltas():
@@ -952,6 +1147,111 @@ def test_spark_pipeline_fails_before_writing_when_output_contract_drifts(
     assert not (processed_dir / "spark_pipeline_manifest.json").exists()
 
 
+def test_spark_pipeline_fails_before_writing_when_gold_metrics_drift(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "pipeline.json"
+    raw_path = tmp_path / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    raw_path.write_text(
+        "order_id,customer_id,order_date,category,product,quantity,unit_price,status\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    written_paths = []
+    raw_df = FakeDataFrame(count_value=3)
+    silver_df = FakeWritableDataFrame(
+        2,
+        written_paths,
+        columns=spark_pipeline.SILVER_COLUMNS,
+        aggregate_row={"orders": 2, "units": 4, "revenue": 8000.0},
+    )
+    rejected_df = FakeWritableDataFrame(
+        1,
+        written_paths,
+        columns=spark_pipeline.REJECTED_COLUMNS,
+        aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
+    )
+    FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
+
+    def fake_build_spark_gold_dataframes(*args):
+        return {
+            "gold_revenue_metrics": {
+                "dataframe": FakeWritableDataFrame(
+                    1,
+                    written_paths,
+                    columns=spark_pipeline.GOLD_REVENUE_FIELDS,
+                    aggregate_row={"orders": 2, "units": 4, "revenue": 7999.0},
+                ),
+                "expected_columns": spark_pipeline.GOLD_REVENUE_FIELDS,
+                "path_name": "spark_gold_revenue_metrics",
+            },
+            "gold_customer_metrics": {
+                "dataframe": FakeWritableDataFrame(
+                    1,
+                    written_paths,
+                    columns=spark_pipeline.GOLD_CUSTOMER_FIELDS,
+                    aggregate_row={"orders": 2, "units": 4, "revenue": 8000.0},
+                ),
+                "expected_columns": spark_pipeline.GOLD_CUSTOMER_FIELDS,
+                "path_name": "spark_gold_customer_metrics",
+            },
+            "gold_category_metrics": {
+                "dataframe": FakeWritableDataFrame(
+                    1,
+                    written_paths,
+                    columns=spark_pipeline.GOLD_CATEGORY_FIELDS,
+                    aggregate_row={"orders": 2, "units": 4, "revenue": 8000.0},
+                ),
+                "expected_columns": spark_pipeline.GOLD_CATEGORY_FIELDS,
+                "path_name": "spark_gold_category_metrics",
+            },
+            "gold_rejection_metrics": {
+                "dataframe": FakeWritableDataFrame(
+                    1,
+                    written_paths,
+                    columns=spark_pipeline.GOLD_REJECTION_FIELDS,
+                    aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
+                ),
+                "expected_columns": spark_pipeline.GOLD_REJECTION_FIELDS,
+                "path_name": "spark_gold_rejection_metrics",
+            },
+        }
+
+    monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
+    monkeypatch.setattr(
+        spark_pipeline,
+        "build_silver_and_rejected_dataframes",
+        lambda *args, **kwargs: (silver_df, rejected_df),
+    )
+    monkeypatch.setattr(
+        spark_pipeline,
+        "build_spark_gold_dataframes",
+        fake_build_spark_gold_dataframes,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Metric reconciliation failed: gold_revenue_amount_match_silver",
+    ):
+        spark_pipeline.run_spark_silver_pipeline(config_path)
+
+    assert written_paths == []
+    assert FakeSparkSession.stop_count == 1
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+
+
 def test_spark_pipeline_preserves_existing_outputs_when_staged_write_fails(
     tmp_path,
     monkeypatch,
@@ -989,11 +1289,13 @@ def test_spark_pipeline_preserves_existing_outputs_when_staged_write_fails(
         2,
         written_paths,
         columns=spark_pipeline.SILVER_COLUMNS,
+        aggregate_row={"orders": 2, "units": 4, "revenue": 8000.0},
     )
     rejected_df = FakeWritableDataFrame(
         1,
         written_paths,
         columns=spark_pipeline.REJECTED_COLUMNS,
+        aggregate_row={"orders": 1, "units": 1, "revenue": 800.0},
     )
     rejected_df.write = FailingDataFrameWriter(written_paths)
     FakeSparkSession.reader = FakeSparkReader(raw_df)

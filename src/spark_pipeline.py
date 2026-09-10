@@ -26,6 +26,7 @@ try:
         load_config,
         make_staged_directory,
         raise_for_failed_reconciliation,
+        raise_for_failed_metric_reconciliation,
         replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
@@ -52,6 +53,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         load_config,
         make_staged_directory,
         raise_for_failed_reconciliation,
+        raise_for_failed_metric_reconciliation,
         replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
@@ -350,6 +352,174 @@ def build_spark_output_contract_validation(outputs):
     }
 
 
+def _metric_check(name, expected, actual):
+    return {
+        "name": name,
+        "success": expected == actual,
+        "expected": expected,
+        "actual": actual,
+        "difference": round(expected - actual, 2)
+        if isinstance(expected, float) or isinstance(actual, float)
+        else expected - actual,
+    }
+
+
+def _row_value(row, field):
+    try:
+        return row[field]
+    except (KeyError, TypeError):
+        return getattr(row, field)
+
+
+def _collect_spark_metric_row(dataframe, expressions):
+    rows = dataframe.selectExpr(*expressions.values()).collect()
+    if not rows:
+        return {}
+    return {name: _row_value(rows[0], name) for name in expressions}
+
+
+def build_spark_metric_reconciliation(silver_df, rejected_df, spark_outputs):
+    silver_metrics = _collect_spark_metric_row(
+        silver_df,
+        {
+            "orders": "count(*) as orders",
+            "units": "cast(coalesce(sum(quantity), 0) as bigint) as units",
+            "revenue": (
+                "cast(coalesce(round(sum(revenue), 2), 0.0) as double) as revenue"
+            ),
+        },
+    )
+    rejected_metrics = _collect_spark_metric_row(
+        rejected_df,
+        {
+            "orders": "count(*) as orders",
+            "units": (
+                "cast(coalesce(sum(cast(quantity as int)), 0) as bigint) as units"
+            ),
+            "revenue": (
+                "cast(coalesce(round("
+                "sum(cast(quantity as int) * cast(unit_price as double)), 2"
+                "), 0.0) as double) as revenue"
+            ),
+        },
+    )
+    gold_revenue_metrics = _collect_spark_metric_row(
+        spark_outputs["gold_revenue_metrics"]["dataframe"],
+        {
+            "orders": "cast(coalesce(sum(orders), 0) as bigint) as orders",
+            "units": "cast(coalesce(sum(units), 0) as bigint) as units",
+            "revenue": (
+                "cast(coalesce(round(sum(revenue), 2), 0.0) as double) as revenue"
+            ),
+        },
+    )
+    gold_customer_metrics = _collect_spark_metric_row(
+        spark_outputs["gold_customer_metrics"]["dataframe"],
+        {
+            "orders": "cast(coalesce(sum(orders), 0) as bigint) as orders",
+            "units": "cast(coalesce(sum(units), 0) as bigint) as units",
+            "revenue": (
+                "cast(coalesce(round(sum(revenue), 2), 0.0) as double) as revenue"
+            ),
+        },
+    )
+    gold_category_metrics = _collect_spark_metric_row(
+        spark_outputs["gold_category_metrics"]["dataframe"],
+        {
+            "orders": "cast(coalesce(sum(orders), 0) as bigint) as orders",
+            "units": "cast(coalesce(sum(units), 0) as bigint) as units",
+            "revenue": (
+                "cast(coalesce(round(sum(revenue), 2), 0.0) as double) as revenue"
+            ),
+        },
+    )
+    gold_rejection_metrics = _collect_spark_metric_row(
+        spark_outputs["gold_rejection_metrics"]["dataframe"],
+        {
+            "orders": (
+                "cast(coalesce(sum(rejected_orders), 0) as bigint) as orders"
+            ),
+            "units": (
+                "cast(coalesce(sum(rejected_units), 0) as bigint) as units"
+            ),
+            "revenue": (
+                "cast(coalesce(round(sum(potential_revenue), 2), 0.0) as double) "
+                "as revenue"
+            ),
+        },
+    )
+
+    checks = [
+        _metric_check(
+            "gold_revenue_orders_match_silver",
+            silver_metrics["orders"],
+            gold_revenue_metrics["orders"],
+        ),
+        _metric_check(
+            "gold_revenue_units_match_silver",
+            silver_metrics["units"],
+            gold_revenue_metrics["units"],
+        ),
+        _metric_check(
+            "gold_revenue_amount_match_silver",
+            silver_metrics["revenue"],
+            gold_revenue_metrics["revenue"],
+        ),
+        _metric_check(
+            "gold_customer_orders_match_silver",
+            silver_metrics["orders"],
+            gold_customer_metrics["orders"],
+        ),
+        _metric_check(
+            "gold_customer_units_match_silver",
+            silver_metrics["units"],
+            gold_customer_metrics["units"],
+        ),
+        _metric_check(
+            "gold_customer_revenue_match_silver",
+            silver_metrics["revenue"],
+            gold_customer_metrics["revenue"],
+        ),
+        _metric_check(
+            "gold_category_orders_match_silver",
+            silver_metrics["orders"],
+            gold_category_metrics["orders"],
+        ),
+        _metric_check(
+            "gold_category_units_match_silver",
+            silver_metrics["units"],
+            gold_category_metrics["units"],
+        ),
+        _metric_check(
+            "gold_category_revenue_match_silver",
+            silver_metrics["revenue"],
+            gold_category_metrics["revenue"],
+        ),
+        _metric_check(
+            "gold_rejection_orders_match_rejected",
+            rejected_metrics["orders"],
+            gold_rejection_metrics["orders"],
+        ),
+        _metric_check(
+            "gold_rejection_units_match_rejected",
+            rejected_metrics["units"],
+            gold_rejection_metrics["units"],
+        ),
+        _metric_check(
+            "gold_rejection_revenue_match_rejected",
+            rejected_metrics["revenue"],
+            gold_rejection_metrics["revenue"],
+        ),
+    ]
+    failed_checks = [check["name"] for check in checks if not check["success"]]
+    return {
+        "version": 1,
+        "success": not failed_checks,
+        "failed_checks": failed_checks,
+        "checks": checks,
+    }
+
+
 def _read_spark_sql_model(sql_path):
     return Path(sql_path).read_text(encoding="utf-8").strip().rstrip(";")
 
@@ -423,6 +593,7 @@ def build_spark_manifest(
     duration_ms,
     reconciliation,
     output_contract_validation,
+    metric_reconciliation,
     output_inventory,
     health_warnings,
     output_row_counts,
@@ -481,6 +652,7 @@ def build_spark_manifest(
             ),
         },
         "reconciliation": reconciliation,
+        "metric_reconciliation": metric_reconciliation,
         "schema_contract_validation": output_contract_validation,
     }
 
@@ -721,6 +893,12 @@ def run_spark_silver_pipeline(config_path):
         raise_for_failed_spark_output_contract_validation(
             output_contract_validation
         )
+        metric_reconciliation = build_spark_metric_reconciliation(
+            silver_df,
+            rejected_df,
+            spark_outputs,
+        )
+        raise_for_failed_metric_reconciliation(metric_reconciliation)
         output_paths = {
             output_name: processed_dir / payload["path_name"]
             for output_name, payload in spark_outputs.items()
@@ -759,6 +937,7 @@ def run_spark_silver_pipeline(config_path):
             duration_ms=round((time.perf_counter() - started_at_monotonic) * 1000, 3),
             reconciliation=reconciliation,
             output_contract_validation=output_contract_validation,
+            metric_reconciliation=metric_reconciliation,
             output_inventory=output_inventory,
             health_warnings=health_warnings,
             output_row_counts=output_row_counts,
