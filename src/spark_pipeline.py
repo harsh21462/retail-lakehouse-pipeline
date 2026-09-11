@@ -74,6 +74,14 @@ SILVER_COLUMNS = [
 REJECTED_COLUMNS = [*REQUIRED_COLUMNS, "rejection_reason"]
 SPARK_MANIFEST_FILENAME = "spark_pipeline_manifest.json"
 LOGGER = logging.getLogger(__name__)
+SPARK_OUTPUT_DESCRIPTIONS = {
+    "silver_orders": "Cleaned analytics-ready orders produced by Spark.",
+    "rejected_orders": "Source-valid orders excluded from Spark silver scope.",
+    "gold_revenue_metrics": "Spark revenue metrics by order date and category.",
+    "gold_customer_metrics": "Spark customer-level order and revenue metrics.",
+    "gold_category_metrics": "Spark category-level order and revenue metrics.",
+    "gold_rejection_metrics": "Spark rejected-order impact metrics.",
+}
 
 
 def _require_pyspark():
@@ -582,6 +590,95 @@ def write_spark_parquet_outputs(outputs):
         raise
 
 
+def build_spark_data_catalog(
+    output_paths,
+    output_row_counts,
+    output_contract_validation,
+):
+    return {
+        "version": 1,
+        "format": "manifest_embedded",
+        "engine": "spark",
+        "tables": [
+            {
+                "name": output_name,
+                "description": SPARK_OUTPUT_DESCRIPTIONS.get(
+                    output_name,
+                    "Spark published Parquet table.",
+                ),
+                "format": "parquet",
+                "path": str(output_paths[output_name]),
+                "rows": output_row_counts.get(output_name),
+                "columns": [
+                    {"name": column_name}
+                    for column_name in output_contract_validation["outputs"][
+                        output_name
+                    ]["expected_columns"]
+                ],
+            }
+            for output_name in sorted(output_paths)
+        ],
+    }
+
+
+def build_spark_lineage(*, raw_path, processed_dir, output_paths):
+    nodes = [
+        {
+            "id": "source.raw_orders",
+            "type": "source",
+            "path": str(raw_path),
+        },
+        {
+            "id": "catalog.spark_data_catalog",
+            "type": "metadata",
+            "embedded_in": str(processed_dir / SPARK_MANIFEST_FILENAME),
+        },
+    ]
+    for output_name in sorted(output_paths):
+        node = {
+            "id": f"spark.{output_name}",
+            "type": "table",
+            "engine": "spark",
+            "format": "parquet",
+            "path": str(output_paths[output_name]),
+        }
+        if output_name.startswith("gold_"):
+            node["layer"] = "gold"
+            node["type"] = "sql_model"
+        elif output_name == "rejected_orders":
+            node["layer"] = "silver_audit"
+        else:
+            node["layer"] = "silver"
+        nodes.append(node)
+
+    candidate_edges = [
+        ("source.raw_orders", "spark.silver_orders"),
+        ("source.raw_orders", "spark.rejected_orders"),
+        ("spark.silver_orders", "spark.gold_revenue_metrics"),
+        ("spark.silver_orders", "spark.gold_customer_metrics"),
+        ("spark.silver_orders", "spark.gold_category_metrics"),
+        ("spark.rejected_orders", "spark.gold_rejection_metrics"),
+    ]
+    node_ids = {node["id"] for node in nodes}
+    edges = [
+        {"from": source, "to": target}
+        for source, target in candidate_edges
+        if source in node_ids and target in node_ids
+    ]
+    for output_name in sorted(output_paths):
+        edges.append(
+            {"from": f"spark.{output_name}", "to": "catalog.spark_data_catalog"}
+        )
+
+    return {
+        "version": 1,
+        "engine": "spark",
+        "root": str(processed_dir),
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 def build_spark_manifest(
     *,
     config_path,
@@ -641,6 +738,16 @@ def build_spark_manifest(
             }
             for output_name, output_path in output_paths.items()
         },
+        "data_catalog": build_spark_data_catalog(
+            output_paths,
+            output_row_counts,
+            output_contract_validation,
+        ),
+        "lineage": build_spark_lineage(
+            raw_path=raw_path,
+            processed_dir=processed_dir,
+            output_paths=output_paths,
+        ),
         "output_inventory": output_inventory,
         "sql_models": build_sql_model_inventory(output_paths),
         "health": {

@@ -138,6 +138,10 @@ retail-lakehouse-pipeline/
    Spark also reconciles gold order, unit, and revenue aggregates back to the
    Spark silver and rejected-order DataFrames before publishing Parquet
    outputs, so SQL model drift fails the run before replacing published data.
+   The Spark manifest embeds a BI-facing data catalog for the published
+   Parquet outputs and a Spark lineage graph that links the raw source,
+   silver and rejected-order outputs, executable gold SQL models, and the
+   embedded catalog handoff.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -435,7 +439,7 @@ before rows are partitioned or aggregated.
 
 - [x] Add PySpark silver-layer adapter.
 - [x] Add PySpark orchestration for gold models and manifest SQL model inventory.
-- Add remaining Spark manifest parity for lineage and catalog handoffs.
+- [x] Add remaining Spark manifest parity for lineage and catalog handoffs.
 - [x] Add partitioned output.
 - [x] Add Parquet writer for partitioned outputs.
 - [x] Add Great Expectations style data quality checks.

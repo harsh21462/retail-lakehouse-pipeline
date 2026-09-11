@@ -781,11 +781,152 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
             ),
         }
     )
+    assert manifest["data_catalog"]["version"] == 1
+    assert manifest["data_catalog"]["engine"] == "spark"
+    assert manifest["data_catalog"]["format"] == "manifest_embedded"
+    assert manifest["data_catalog"]["tables"][0] == {
+        "name": "gold_category_metrics",
+        "description": "Spark category-level order and revenue metrics.",
+        "format": "parquet",
+        "path": str(processed_dir / "spark_gold_category_metrics"),
+        "rows": 1,
+        "columns": [
+            {"name": column_name}
+            for column_name in spark_pipeline.GOLD_CATEGORY_FIELDS
+        ],
+    }
+    assert {table["name"] for table in manifest["data_catalog"]["tables"]} == set(
+        manifest["outputs"]
+    )
+    assert manifest["lineage"]["version"] == 1
+    assert manifest["lineage"]["engine"] == "spark"
+    assert manifest["lineage"]["root"] == str(processed_dir)
+    assert {
+        "from": "source.raw_orders",
+        "to": "spark.silver_orders",
+    } in manifest["lineage"]["edges"]
+    assert {
+        "from": "spark.silver_orders",
+        "to": "spark.gold_revenue_metrics",
+    } in manifest["lineage"]["edges"]
+    assert {
+        "from": "spark.rejected_orders",
+        "to": "spark.gold_rejection_metrics",
+    } in manifest["lineage"]["edges"]
+    assert {
+        "from": "spark.gold_revenue_metrics",
+        "to": "catalog.spark_data_catalog",
+    } in manifest["lineage"]["edges"]
     assert manifest["run_comparison"] == {
         "version": 1,
         "previous_manifest_available": False,
         "unavailable_reason": "not_found",
     }
+
+
+def test_spark_data_catalog_embeds_output_contracts(tmp_path):
+    output_paths = {
+        "silver_orders": tmp_path / "spark_silver_orders",
+        "gold_revenue_metrics": tmp_path / "spark_gold_revenue_metrics",
+    }
+    validation = {
+        "outputs": {
+            "silver_orders": {
+                "expected_columns": spark_pipeline.SILVER_COLUMNS,
+            },
+            "gold_revenue_metrics": {
+                "expected_columns": spark_pipeline.GOLD_REVENUE_FIELDS,
+            },
+        },
+    }
+
+    catalog = spark_pipeline.build_spark_data_catalog(
+        output_paths,
+        {
+            "silver_orders": 42,
+            "gold_revenue_metrics": 7,
+        },
+        validation,
+    )
+
+    assert catalog == {
+        "version": 1,
+        "format": "manifest_embedded",
+        "engine": "spark",
+        "tables": [
+            {
+                "name": "gold_revenue_metrics",
+                "description": "Spark revenue metrics by order date and category.",
+                "format": "parquet",
+                "path": str(tmp_path / "spark_gold_revenue_metrics"),
+                "rows": 7,
+                "columns": [
+                    {"name": column_name}
+                    for column_name in spark_pipeline.GOLD_REVENUE_FIELDS
+                ],
+            },
+            {
+                "name": "silver_orders",
+                "description": (
+                    "Cleaned analytics-ready orders produced by Spark."
+                ),
+                "format": "parquet",
+                "path": str(tmp_path / "spark_silver_orders"),
+                "rows": 42,
+                "columns": [
+                    {"name": column_name}
+                    for column_name in spark_pipeline.SILVER_COLUMNS
+                ],
+            },
+        ],
+    }
+
+
+def test_spark_lineage_links_source_outputs_and_catalog(tmp_path):
+    output_paths = {
+        "silver_orders": tmp_path / "spark_silver_orders",
+        "rejected_orders": tmp_path / "spark_rejected_orders",
+        "gold_revenue_metrics": tmp_path / "spark_gold_revenue_metrics",
+        "gold_customer_metrics": tmp_path / "spark_gold_customer_metrics",
+        "gold_category_metrics": tmp_path / "spark_gold_category_metrics",
+        "gold_rejection_metrics": tmp_path / "spark_gold_rejection_metrics",
+    }
+
+    lineage = spark_pipeline.build_spark_lineage(
+        raw_path=tmp_path / "orders.csv",
+        processed_dir=tmp_path,
+        output_paths=output_paths,
+    )
+
+    assert lineage["version"] == 1
+    assert lineage["engine"] == "spark"
+    assert lineage["root"] == str(tmp_path)
+    assert {node["id"] for node in lineage["nodes"]} == {
+        "source.raw_orders",
+        "catalog.spark_data_catalog",
+        "spark.silver_orders",
+        "spark.rejected_orders",
+        "spark.gold_revenue_metrics",
+        "spark.gold_customer_metrics",
+        "spark.gold_category_metrics",
+        "spark.gold_rejection_metrics",
+    }
+    assert {
+        "from": "source.raw_orders",
+        "to": "spark.silver_orders",
+    } in lineage["edges"]
+    assert {
+        "from": "spark.silver_orders",
+        "to": "spark.gold_customer_metrics",
+    } in lineage["edges"]
+    assert {
+        "from": "spark.rejected_orders",
+        "to": "spark.gold_rejection_metrics",
+    } in lineage["edges"]
+    assert {
+        "from": "spark.gold_category_metrics",
+        "to": "catalog.spark_data_catalog",
+    } in lineage["edges"]
 
 
 def test_spark_metric_reconciliation_detects_gold_aggregate_drift():
