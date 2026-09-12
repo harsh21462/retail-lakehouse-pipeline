@@ -224,6 +224,63 @@ def get_latest_spark_order_date(raw_orders_df):
     return _parse_order_date(latest_value)
 
 
+def _spark_profile_date(value):
+    parsed_date = _parse_order_date(value)
+    if parsed_date is None:
+        return None
+    return parsed_date.isoformat()
+
+
+def _optional_row_value(row, field):
+    try:
+        return _row_value(row, field)
+    except (AttributeError, KeyError, TypeError):
+        return None
+
+
+def build_spark_source_profile(raw_orders_df):
+    date_range_rows = raw_orders_df.selectExpr(
+        "min(order_date) as min_order_date",
+        "max(order_date) as max_order_date",
+    ).collect()
+    date_range_row = date_range_rows[0] if date_range_rows else {}
+    min_order_date = _spark_profile_date(
+        _optional_row_value(date_range_row, "min_order_date")
+    )
+    max_order_date = _spark_profile_date(
+        _optional_row_value(date_range_row, "max_order_date")
+    )
+
+    high_watermark_order_id = None
+    if max_order_date is not None:
+        high_watermark_rows = (
+            raw_orders_df.where(f"order_date = {_spark_sql_literal(max_order_date)}")
+            .selectExpr("max(order_id) as order_id")
+            .collect()
+        )
+        if high_watermark_rows:
+            high_watermark_order_id = _optional_row_value(
+                high_watermark_rows[0],
+                "order_id",
+            )
+
+    status_counts = {}
+    for row in raw_orders_df.groupBy("status").count().collect():
+        status = _optional_row_value(row, "status")
+        count = _optional_row_value(row, "count")
+        if status is not None and count is not None:
+            status_counts[status] = count
+
+    return {
+        "order_date_range": {"min": min_order_date, "max": max_order_date},
+        "high_watermark": {
+            "order_date": max_order_date,
+            "order_id": high_watermark_order_id,
+        },
+        "status_counts": dict(sorted(status_counts.items())),
+    }
+
+
 def build_spark_health_warnings(
     *,
     bronze_count,
@@ -695,6 +752,7 @@ def build_spark_manifest(
     health_warnings,
     output_row_counts,
     output_paths,
+    source_profile,
 ):
     output_paths = dict(output_paths)
     return {
@@ -716,6 +774,7 @@ def build_spark_manifest(
             "sha256": file_sha256(raw_path),
             "file_audit": build_file_audit(raw_path),
             "rows": reconciliation["bronze_rows"],
+            "profile": source_profile,
         },
         "config": {
             "included_statuses": list(config["included_statuses"]),
@@ -837,6 +896,30 @@ def _spark_warning_count(manifest):
     return _spark_health(manifest).get("warning_count")
 
 
+def _spark_source_profile(manifest):
+    profile = manifest.get("source", {}).get("profile", {})
+    if not isinstance(profile, dict):
+        return {}
+    return profile
+
+
+def _spark_source_status_counts(manifest):
+    counts = _spark_source_profile(manifest).get("status_counts")
+    if not isinstance(counts, dict):
+        return {}
+    return counts
+
+
+def _spark_source_high_watermark(manifest):
+    watermark = _spark_source_profile(manifest).get("high_watermark")
+    if not isinstance(watermark, dict):
+        return None
+    return {
+        "order_date": watermark.get("order_date"),
+        "order_id": watermark.get("order_id"),
+    }
+
+
 def build_spark_run_comparison(
     current_manifest,
     previous_manifest=None,
@@ -896,6 +979,21 @@ def build_spark_run_comparison(
             "sha256_changed": previous_sha != current_sha,
         }
 
+    previous_status_counts = _spark_source_status_counts(previous_manifest)
+    current_status_counts = _spark_source_status_counts(current_manifest)
+    source_status_count_deltas = {}
+    for status in sorted(set(previous_status_counts) | set(current_status_counts)):
+        previous_count = previous_status_counts.get(status)
+        current_count = current_status_counts.get(status)
+        source_status_count_deltas[status] = {
+            "previous": previous_count,
+            "current": current_count,
+            "delta": _delta(previous_count, current_count),
+        }
+
+    previous_high_watermark = _spark_source_high_watermark(previous_manifest)
+    current_high_watermark = _spark_source_high_watermark(current_manifest)
+
     return {
         "version": 1,
         "previous_manifest_available": True,
@@ -936,6 +1034,12 @@ def build_spark_run_comparison(
             _spark_warning_count(previous_manifest),
             _spark_warning_count(current_manifest),
         ),
+        "source_high_watermark": {
+            "previous": previous_high_watermark,
+            "current": current_high_watermark,
+            "changed": previous_high_watermark != current_high_watermark,
+        },
+        "source_status_count_deltas": source_status_count_deltas,
         "output_row_deltas": output_row_deltas,
         "output_checksum_changes": output_checksum_changes,
     }
@@ -965,6 +1069,7 @@ def run_spark_silver_pipeline(config_path):
             rejected_df,
         )
         raise_for_failed_reconciliation(reconciliation)
+        source_profile = build_spark_source_profile(raw_orders_df)
         latest_order_date = None
         if (
             "max_source_lag_days" in config["warning_thresholds"]
@@ -1049,6 +1154,7 @@ def run_spark_silver_pipeline(config_path):
             health_warnings=health_warnings,
             output_row_counts=output_row_counts,
             output_paths=output_paths,
+            source_profile=source_profile,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         previous_manifest, previous_manifest_unavailable_reason = (

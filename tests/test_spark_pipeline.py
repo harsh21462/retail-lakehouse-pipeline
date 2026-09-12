@@ -20,25 +20,39 @@ class FakeDataFrame:
         count_value=0,
         columns=None,
         aggregate_row=None,
+        aggregate_rows_by_expression=None,
+        group_count_rows=None,
     ):
         self.calls = calls or []
         self.count_value = count_value
         self.columns = columns or []
         self.aggregate_row = aggregate_row
+        self.aggregate_rows_by_expression = aggregate_rows_by_expression or {}
+        self.group_count_rows = group_count_rows or []
         self.temp_view_name = None
 
     def where(self, expression):
         return FakeDataFrame(
             [*self.calls, ("where", expression)],
             self.count_value,
+            columns=self.columns,
             aggregate_row=self.aggregate_row,
+            aggregate_rows_by_expression=self.aggregate_rows_by_expression,
+            group_count_rows=self.group_count_rows,
         )
 
     def selectExpr(self, *expressions):
+        aggregate_row = self.aggregate_rows_by_expression.get(
+            expressions,
+            self.aggregate_row,
+        )
         return FakeDataFrame(
             [*self.calls, ("selectExpr", expressions)],
             self.count_value,
-            aggregate_row=self.aggregate_row,
+            columns=self.columns,
+            aggregate_row=aggregate_row,
+            aggregate_rows_by_expression=self.aggregate_rows_by_expression,
+            group_count_rows=self.group_count_rows,
         )
 
     def withColumn(self, name, expression):
@@ -50,6 +64,12 @@ class FakeDataFrame:
     def select(self, *columns):
         return FakeDataFrame([*self.calls, ("select", columns)], self.count_value)
 
+    def groupBy(self, *columns):
+        return FakeGroupedDataFrame(
+            [*self.calls, ("groupBy", columns)],
+            self.group_count_rows,
+        )
+
     def count(self):
         return self.count_value
 
@@ -60,6 +80,18 @@ class FakeDataFrame:
 
     def createOrReplaceTempView(self, name):
         self.temp_view_name = name
+
+
+class FakeGroupedDataFrame:
+    def __init__(self, calls, group_count_rows):
+        self.calls = calls
+        self.group_count_rows = group_count_rows
+
+    def count(self):
+        return self
+
+    def collect(self):
+        return self.group_count_rows
 
 
 class FakeDataFrameWriter:
@@ -451,7 +483,23 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     written_paths = []
-    raw_df = FakeDataFrame(count_value=3)
+    raw_df = FakeDataFrame(
+        count_value=3,
+        aggregate_rows_by_expression={
+            (
+                "min(order_date) as min_order_date",
+                "max(order_date) as max_order_date",
+            ): {
+                "min_order_date": "2026-06-01",
+                "max_order_date": "2026-06-02",
+            },
+            ("max(order_id) as order_id",): {"order_id": "1003"},
+        },
+        group_count_rows=[
+            {"status": "cancelled", "count": 1},
+            {"status": "delivered", "count": 2},
+        ],
+    )
     silver_df = FakeWritableDataFrame(
         2,
         written_paths,
@@ -559,6 +607,11 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert manifest["source"]["file_audit"]["bytes"] == raw_path.stat().st_size
     assert manifest["source"]["file_audit"]["modified_at_utc"].endswith("Z")
     assert manifest["source"]["rows"] == 3
+    assert manifest["source"]["profile"] == {
+        "order_date_range": {"min": "2026-06-01", "max": "2026-06-02"},
+        "high_watermark": {"order_date": "2026-06-02", "order_id": "1003"},
+        "status_counts": {"cancelled": 1, "delivered": 2},
+    }
     assert manifest["config"] == {
         "included_statuses": ["delivered"],
         "order_date_window": {"start": None, "end": None},
@@ -929,6 +982,33 @@ def test_spark_lineage_links_source_outputs_and_catalog(tmp_path):
     } in lineage["edges"]
 
 
+def test_spark_source_profile_reports_date_watermark_and_status_counts():
+    raw_df = FakeDataFrame(
+        aggregate_rows_by_expression={
+            (
+                "min(order_date) as min_order_date",
+                "max(order_date) as max_order_date",
+            ): {
+                "min_order_date": "2026-06-01",
+                "max_order_date": "2026-06-03",
+            },
+            ("max(order_id) as order_id",): {"order_id": "1004"},
+        },
+        group_count_rows=[
+            {"status": "returned", "count": 1},
+            {"status": "delivered", "count": 3},
+        ],
+    )
+
+    profile = spark_pipeline.build_spark_source_profile(raw_df)
+
+    assert profile == {
+        "order_date_range": {"min": "2026-06-01", "max": "2026-06-03"},
+        "high_watermark": {"order_date": "2026-06-03", "order_id": "1004"},
+        "status_counts": {"delivered": 3, "returned": 1},
+    }
+
+
 def test_spark_metric_reconciliation_detects_gold_aggregate_drift():
     written_paths = []
     silver_df = FakeWritableDataFrame(
@@ -1011,7 +1091,16 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
             "completed_at_utc": "2026-08-01T00:00:00Z",
             "config_sha256": "old-config",
         },
-        "source": {"sha256": "old-source"},
+        "source": {
+            "sha256": "old-source",
+            "profile": {
+                "high_watermark": {
+                    "order_date": "2026-08-01",
+                    "order_id": "1003",
+                },
+                "status_counts": {"cancelled": 3, "delivered": 12},
+            },
+        },
         "config": {
             "included_statuses": ["cancelled", "delivered"],
             "order_date_window": {"start": "2026-07-01", "end": "2026-07-31"},
@@ -1035,7 +1124,16 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
             "completed_at_utc": "2026-08-02T00:00:00Z",
             "config_sha256": "new-config",
         },
-        "source": {"sha256": "new-source"},
+        "source": {
+            "sha256": "new-source",
+            "profile": {
+                "high_watermark": {
+                    "order_date": "2026-08-02",
+                    "order_id": "1005",
+                },
+                "status_counts": {"delivered": 10, "returned": 5},
+            },
+        },
         "config": {
             "included_statuses": ["delivered", "returned"],
             "order_date_window": {"start": "2026-07-01", "end": "2026-08-01"},
@@ -1100,6 +1198,16 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
         },
         "health_status_changed": True,
         "warning_count_delta": 2,
+        "source_high_watermark": {
+            "previous": {"order_date": "2026-08-01", "order_id": "1003"},
+            "current": {"order_date": "2026-08-02", "order_id": "1005"},
+            "changed": True,
+        },
+        "source_status_count_deltas": {
+            "cancelled": {"previous": 3, "current": None, "delta": None},
+            "delivered": {"previous": 12, "current": 10, "delta": -2},
+            "returned": {"previous": None, "current": 5, "delta": None},
+        },
         "output_row_deltas": {
             "rejected_orders": {"previous": 3, "current": 5, "delta": 2},
             "silver_orders": {"previous": 12, "current": 10, "delta": -2},
@@ -1166,6 +1274,12 @@ def test_spark_run_comparison_tolerates_malformed_sections():
     assert comparison["output_row_deltas"] == {
         "silver_orders": {"previous": None, "current": 2, "delta": None},
     }
+    assert comparison["source_high_watermark"] == {
+        "previous": None,
+        "current": None,
+        "changed": False,
+    }
+    assert comparison["source_status_count_deltas"] == {}
     assert comparison["output_checksum_changes"] == {
         "silver_orders": {
             "previous_sha256": None,

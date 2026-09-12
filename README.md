@@ -127,14 +127,16 @@ retail-lakehouse-pipeline/
    failed Spark write preserves the previous published output set.
    Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
-   environment details, row counts, configured warning thresholds, the Spark
-   health status with machine-readable warning-threshold breaches, the Spark
+   environment details, row counts, source date-range, high-watermark, and
+   status-count profiles, configured warning thresholds, the Spark health
+   status with machine-readable warning-threshold breaches, the Spark
    reconciliation result, and the Spark output schema-contract validation
    result. The Spark manifest also records a SQL model inventory, an output
    inventory with file counts, byte sizes, and deterministic SHA-256 checksums
    for the emitted Parquet directories, plus a run-to-run comparison against
-   the previous Spark manifest for source/config checksum drift, output
-   row-count deltas, config scope changes, and output checksum changes.
+   the previous Spark manifest for source/config checksum drift, source
+   high-watermark and status-count drift, output row-count deltas, config
+   scope changes, and output checksum changes.
    Spark also reconciles gold order, unit, and revenue aggregates back to the
    Spark silver and rejected-order DataFrames before publishing Parquet
    outputs, so SQL model drift fails the run before replacing published data.
@@ -294,9 +296,10 @@ data, preserving the same warning names and threshold-breach shape used by the
 Python pipeline.
 When a previous Spark manifest exists, the new run comparison records output
 row-count deltas, source/config checksum changes, included-status and date
-window drift, warning-threshold changes, health status changes, warning-count
-deltas, and output checksum changes; malformed or missing previous manifests
-are reported as unavailable instead of failing a valid Spark publish.
+window drift, warning-threshold changes, source high-watermark changes,
+source status-count deltas, health status changes, warning-count deltas, and
+output checksum changes; malformed or missing previous manifests are reported
+as unavailable instead of failing a valid Spark publish.
 The Spark session is stopped in a `finally` block so failed reconciliations,
 contract checks, or writes do not leak a live session in scheduled environments.
 
