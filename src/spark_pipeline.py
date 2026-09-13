@@ -30,6 +30,7 @@ try:
         replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
+        write_text,
     )
     from .quality_checks import REQUIRED_COLUMNS
 except ImportError:  # Support direct execution with `python src/spark_pipeline.py`.
@@ -57,6 +58,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         replace_directory_after_success,
         resolve_pipeline_path,
         write_json,
+        write_text,
     )
     from quality_checks import REQUIRED_COLUMNS
 
@@ -73,6 +75,7 @@ SILVER_COLUMNS = [
 ]
 REJECTED_COLUMNS = [*REQUIRED_COLUMNS, "rejection_reason"]
 SPARK_MANIFEST_FILENAME = "spark_pipeline_manifest.json"
+SPARK_RUN_SUMMARY_FILENAME = "spark_pipeline_run_summary.md"
 LOGGER = logging.getLogger(__name__)
 SPARK_OUTPUT_DESCRIPTIONS = {
     "silver_orders": "Cleaned analytics-ready orders produced by Spark.",
@@ -1045,6 +1048,173 @@ def build_spark_run_comparison(
     }
 
 
+def _format_spark_summary_value(value):
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _format_spark_delta(delta):
+    if delta is None:
+        return "n/a"
+    if isinstance(delta, (int, float)) and delta > 0:
+        return f"+{delta}"
+    return str(delta)
+
+
+def _format_spark_watermark(watermark):
+    if not isinstance(watermark, dict):
+        return "n/a"
+    order_date = watermark.get("order_date")
+    order_id = watermark.get("order_id")
+    if order_date is None and order_id is None:
+        return "n/a"
+    return (
+        f"{_format_spark_summary_value(order_date)} "
+        f"(`{_format_spark_summary_value(order_id)}`)"
+    )
+
+
+def build_spark_run_summary_markdown(manifest):
+    run = manifest.get("run", {})
+    source = manifest.get("source", {})
+    source_profile = source.get("profile", {})
+    if not isinstance(source_profile, dict):
+        source_profile = {}
+    config = manifest.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    health = manifest.get("health", {})
+    if not isinstance(health, dict):
+        health = {}
+    reconciliation = manifest.get("reconciliation", {})
+    if not isinstance(reconciliation, dict):
+        reconciliation = {}
+    metric_reconciliation = manifest.get("metric_reconciliation", {})
+    if not isinstance(metric_reconciliation, dict):
+        metric_reconciliation = {}
+    outputs = _spark_outputs(manifest)
+    comparison = manifest.get("run_comparison", {})
+    if not isinstance(comparison, dict):
+        comparison = {}
+
+    order_date_window = config.get("order_date_window", {})
+    if not isinstance(order_date_window, dict):
+        order_date_window = {}
+
+    lines = [
+        "# Spark Pipeline Run Summary",
+        "",
+        f"- Completed: {_format_spark_summary_value(run.get('completed_at_utc'))}",
+        f"- Source: `{_format_spark_summary_value(source.get('path'))}`",
+        f"- Health: {_format_spark_summary_value(health.get('status'))}",
+        f"- Health warnings: {health.get('warning_count', 0)}",
+        f"- Reconciliation: "
+        f"{'passed' if reconciliation.get('success') else 'failed'}",
+        f"- Metric reconciliation: "
+        f"{'passed' if metric_reconciliation.get('success') else 'failed'}",
+        f"- Previous manifest: "
+        f"{_format_spark_summary_value(comparison.get('previous_manifest_available'))}",
+        "",
+        "## Config",
+        "",
+        f"- Included statuses: "
+        f"{', '.join(config.get('included_statuses', [])) or 'n/a'}",
+        f"- Order date window: "
+        f"{_format_spark_summary_value(order_date_window.get('start'))} "
+        f"to {_format_spark_summary_value(order_date_window.get('end'))}",
+        "",
+        "## Source Profile",
+        "",
+        f"- Rows: {_format_spark_summary_value(source.get('rows'))}",
+        f"- High watermark: "
+        f"{_format_spark_watermark(source_profile.get('high_watermark'))}",
+        "",
+        "| Status | Rows | Delta |",
+        "| --- | ---: | ---: |",
+    ]
+
+    status_counts = source_profile.get("status_counts", {})
+    if not isinstance(status_counts, dict):
+        status_counts = {}
+    status_deltas = comparison.get("source_status_count_deltas", {})
+    if not isinstance(status_deltas, dict):
+        status_deltas = {}
+    for status, rows in sorted(status_counts.items()):
+        delta = status_deltas.get(status, {})
+        if not isinstance(delta, dict):
+            delta = {}
+        lines.append(
+            f"| `{status}` | {_format_spark_summary_value(rows)} | "
+            f"{_format_spark_delta(delta.get('delta'))} |"
+        )
+    if not status_counts:
+        lines.append("| n/a | n/a | n/a |")
+
+    lines.extend(
+        [
+            "",
+            "## Published Outputs",
+            "",
+            "| Output | Rows | Delta | Checksum changed |",
+            "| --- | ---: | ---: | --- |",
+        ]
+    )
+    row_deltas = comparison.get("output_row_deltas", {})
+    if not isinstance(row_deltas, dict):
+        row_deltas = {}
+    checksum_changes = comparison.get("output_checksum_changes", {})
+    if not isinstance(checksum_changes, dict):
+        checksum_changes = {}
+    for output_name, output in sorted(outputs.items()):
+        if not isinstance(output, dict):
+            continue
+        row_delta = row_deltas.get(output_name, {})
+        if not isinstance(row_delta, dict):
+            row_delta = {}
+        checksum_change = checksum_changes.get(output_name, {})
+        if not isinstance(checksum_change, dict):
+            checksum_change = {}
+        lines.append(
+            f"| `{output_name}` | {_format_spark_summary_value(output.get('rows'))} | "
+            f"{_format_spark_delta(row_delta.get('delta'))} | "
+            f"{_format_spark_summary_value(checksum_change.get('sha256_changed'))} |"
+        )
+
+    warnings = health.get("warnings", [])
+    if isinstance(warnings, list) and warnings:
+        lines.extend(["", "## Health Warnings", ""])
+        for warning in warnings:
+            if not isinstance(warning, dict):
+                continue
+            lines.append(
+                f"- `{_format_spark_summary_value(warning.get('name'))}`: "
+                f"{_format_spark_summary_value(warning.get('message'))}"
+            )
+
+    threshold_breaches = health.get("threshold_breaches", [])
+    if isinstance(threshold_breaches, list) and threshold_breaches:
+        lines.extend(
+            [
+                "",
+                "## Threshold Breaches",
+                "",
+                "| Name | Observed | Threshold |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for breach in threshold_breaches:
+            if not isinstance(breach, dict):
+                continue
+            lines.append(
+                f"| `{_format_spark_summary_value(breach.get('name'))}` | "
+                f"`{_format_spark_summary_value(breach.get('observed'))}` | "
+                f"`{_format_spark_summary_value(breach.get('threshold'))}` |"
+            )
+
+    return "\n".join(lines) + "\n"
+
+
 def run_spark_silver_pipeline(config_path):
     started_at = datetime.now(timezone.utc)
     started_at_monotonic = time.perf_counter()
@@ -1166,6 +1336,8 @@ def run_spark_silver_pipeline(config_path):
             unavailable_reason=previous_manifest_unavailable_reason,
         )
         write_json(manifest_path, manifest)
+        summary_path = processed_dir / SPARK_RUN_SUMMARY_FILENAME
+        write_text(summary_path, build_spark_run_summary_markdown(manifest))
         return {
             "silver_path": str(output_paths["silver_orders"]),
             "rejected_path": str(output_paths["rejected_orders"]),

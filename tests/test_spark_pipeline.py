@@ -875,6 +875,16 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         "previous_manifest_available": False,
         "unavailable_reason": "not_found",
     }
+    run_summary = (
+        processed_dir / "spark_pipeline_run_summary.md"
+    ).read_text(encoding="utf-8")
+    assert "# Spark Pipeline Run Summary" in run_summary
+    assert f"- Source: `{raw_path}`" in run_summary
+    assert "- Health: passed" in run_summary
+    assert "- Reconciliation: passed" in run_summary
+    assert "- Metric reconciliation: passed" in run_summary
+    assert "| `silver_orders` | 2 | n/a | n/a |" in run_summary
+    assert "| `cancelled` | 1 | n/a |" in run_summary
 
 
 def test_spark_data_catalog_embeds_output_contracts(tmp_path):
@@ -1225,6 +1235,85 @@ def test_spark_run_comparison_reports_output_and_config_deltas():
             },
         },
     }
+
+
+def test_spark_run_summary_markdown_reports_deltas_and_warnings():
+    summary = spark_pipeline.build_spark_run_summary_markdown(
+        {
+            "run": {"completed_at_utc": "2026-08-02T00:00:00Z"},
+            "source": {
+                "path": "/tmp/orders.csv",
+                "rows": 15,
+                "profile": {
+                    "high_watermark": {
+                        "order_date": "2026-08-02",
+                        "order_id": "1005",
+                    },
+                    "status_counts": {"delivered": 10, "returned": 5},
+                },
+            },
+            "config": {
+                "included_statuses": ["delivered", "returned"],
+                "order_date_window": {
+                    "start": "2026-08-01",
+                    "end": "2026-08-31",
+                },
+            },
+            "health": {
+                "status": "warning",
+                "warning_count": 1,
+                "warnings": [
+                    {
+                        "name": "rejection_rate_above_threshold",
+                        "message": "Rejected row rate exceeded threshold",
+                    }
+                ],
+                "threshold_breaches": [
+                    {
+                        "name": "rejection_rate_above_threshold",
+                        "observed": {"rejection_rate": 0.4},
+                        "threshold": {"max_rejection_rate": 0.3},
+                    }
+                ],
+            },
+            "reconciliation": {"success": True},
+            "metric_reconciliation": {"success": True},
+            "outputs": {
+                "silver_orders": {"rows": 10},
+                "rejected_orders": {"rows": 5},
+            },
+            "run_comparison": {
+                "previous_manifest_available": True,
+                "source_status_count_deltas": {
+                    "delivered": {"delta": -2},
+                    "returned": {"delta": None},
+                },
+                "output_row_deltas": {
+                    "silver_orders": {"delta": -2},
+                    "rejected_orders": {"delta": 2},
+                },
+                "output_checksum_changes": {
+                    "silver_orders": {"sha256_changed": True},
+                    "rejected_orders": {"sha256_changed": False},
+                },
+            },
+        }
+    )
+
+    assert "# Spark Pipeline Run Summary" in summary
+    assert "- Health: warning" in summary
+    assert "- Previous manifest: True" in summary
+    assert "- Included statuses: delivered, returned" in summary
+    assert "- High watermark: 2026-08-02 (`1005`)" in summary
+    assert "| `delivered` | 10 | -2 |" in summary
+    assert "| `rejected_orders` | 5 | +2 | False |" in summary
+    assert "| `silver_orders` | 10 | -2 | True |" in summary
+    assert (
+        "- `rejection_rate_above_threshold`: Rejected row rate exceeded threshold"
+        in summary
+    )
+    assert "## Threshold Breaches" in summary
+    assert "`{'max_rejection_rate': 0.3}`" in summary
 
 
 def test_spark_run_comparison_tolerates_missing_previous_manifest():

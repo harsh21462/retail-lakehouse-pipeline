@@ -143,7 +143,11 @@ retail-lakehouse-pipeline/
    The Spark manifest embeds a BI-facing data catalog for the published
    Parquet outputs and a Spark lineage graph that links the raw source,
    silver and rejected-order outputs, executable gold SQL models, and the
-   embedded catalog handoff.
+   embedded catalog handoff. Successful Spark runs also write a
+   `spark_pipeline_run_summary.md` handoff with health status, reconciliation
+   status, source high-watermark and status mix, output row-count deltas,
+   checksum-change flags, and warning threshold breaches for quick scheduled
+   run review without parsing the full JSON manifest.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -300,6 +304,9 @@ window drift, warning-threshold changes, source high-watermark changes,
 source status-count deltas, health status changes, warning-count deltas, and
 output checksum changes; malformed or missing previous manifests are reported
 as unavailable instead of failing a valid Spark publish.
+Each successful Spark run also writes `spark_pipeline_run_summary.md` next to
+the manifest, summarizing the same operational signals for humans reviewing a
+scheduled Spark handoff.
 The Spark session is stopped in a `finally` block so failed reconciliations,
 contract checks, or writes do not leak a live session in scheduled environments.
 
@@ -408,6 +415,9 @@ Each successful run also writes:
   `spark_gold_customer_metrics/`, `spark_gold_category_metrics/`, and
   `spark_gold_rejection_metrics/` when `src/spark_pipeline.py` is run with
   PySpark installed.
+- `spark_pipeline_run_summary.md` with a concise Spark handoff covering health
+  warnings, reconciliation status, source high-watermark and status counts,
+  output row-count deltas, checksum-change flags, and threshold breaches.
 
 ## Streamlit Dashboard
 
