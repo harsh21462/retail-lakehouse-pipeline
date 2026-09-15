@@ -116,23 +116,30 @@ retail-lakehouse-pipeline/
 16. Optionally run the Spark lakehouse adapter in `src/spark_pipeline.py`
    when PySpark is installed. It uses the same config, status scope, date
    window semantics, silver columns, rejected-order columns, and rejection
-   reasons as the Python pipeline, reconciles raw rows against Spark silver
-   plus rejected rows before publishing outputs, executes the checked-in gold
-   SQL models against Spark temp views, and writes Spark-managed Parquet
-   outputs for silver, rejected, revenue, customer, category, and rejection
-   metrics. It validates every Spark DataFrame column contract before any
-   publish, so schema drift fails the run instead of publishing incompatible Parquet.
+   reasons as the Python pipeline. It validates the Spark raw input schema and
+   aggregate quality counts before transforms run, writes a
+   `spark_data_quality_report.json` diagnostic artifact, reconciles raw rows
+   against Spark silver plus rejected rows before publishing outputs, executes
+   the checked-in gold SQL models against Spark temp views, and writes
+   Spark-managed Parquet outputs for silver, rejected, revenue, customer,
+   category, and rejection metrics. It validates every Spark DataFrame column
+   contract before any publish, so schema drift fails the run instead of
+   publishing incompatible Parquet.
    Spark Parquet directories are written to hidden sibling staging directories
    first and swapped into place only after all output writes succeed, so a
    failed Spark write preserves the previous published output set.
-   Each successful Spark run also writes a `spark_pipeline_manifest.json`
+   Each Spark run writes `spark_data_quality_report.json` before publishing
+   Parquet outputs, and quality failures also leave
+   `spark_pipeline_run_summary.md` with failed expectation details before the
+   run stops. Each successful Spark run also writes a `spark_pipeline_manifest.json`
    with run timing, source/config checksums, resolved output paths, runtime
    environment details, row counts, source date-range, high-watermark, and
-   status-count profiles, configured warning thresholds, the Spark health
-   status with machine-readable warning-threshold breaches, the Spark
-   reconciliation result, and the Spark output schema-contract validation
-   result. The Spark manifest also records a SQL model inventory, an output
-   inventory with file counts, byte sizes, and deterministic SHA-256 checksums
+   status-count profiles, configured warning thresholds, the Spark quality
+   summary, Spark health status with machine-readable warning-threshold
+   breaches, the Spark reconciliation result, and the Spark output
+   schema-contract validation result. The Spark manifest also records a SQL
+   model inventory, an output inventory with file counts, byte sizes, and
+   deterministic SHA-256 checksums
    for the emitted Parquet directories, plus a run-to-run comparison against
    the previous Spark manifest for source/config checksum drift, source
    high-watermark and status-count drift, output row-count deltas, config
@@ -144,10 +151,11 @@ retail-lakehouse-pipeline/
    Parquet outputs and a Spark lineage graph that links the raw source,
    silver and rejected-order outputs, executable gold SQL models, and the
    embedded catalog handoff. Successful Spark runs also write a
-   `spark_pipeline_run_summary.md` handoff with health status, reconciliation
-   status, source high-watermark and status mix, output row-count deltas,
-   checksum-change flags, and warning threshold breaches for quick scheduled
-   run review without parsing the full JSON manifest.
+   `spark_pipeline_run_summary.md` handoff with health and quality status,
+   expectation results, reconciliation status, source high-watermark and status
+   mix, output row-count deltas, checksum-change flags, and warning threshold
+   breaches for quick scheduled run review without parsing the full JSON
+   manifest.
 
 CSV and JSON artifacts are written through same-directory temporary files and
 atomically replaced when the write succeeds, so a failed run does not leave
@@ -279,9 +287,11 @@ paths without editing code. It fails with an explicit error when PySpark is
 missing, and the unit tests validate the generated Spark predicates,
 status/date-window handling, CLI config routing, and published column contracts
 without requiring a Spark runtime. Before publishing Spark-managed Parquet
-outputs, it also checks that the raw row count equals accepted plus rejected
-rows and fails the run if Spark did not account for every input row. Successful
-Spark runs emit `spark_pipeline_manifest.json` next to the Spark Parquet
+outputs, it writes `spark_data_quality_report.json`, fails fast on raw schema
+or aggregate quality failures, writes `spark_pipeline_run_summary.md` for
+failed quality runs, and checks that the raw row count equals accepted plus
+rejected rows so Spark cannot publish an unaccounted batch.
+Successful Spark runs emit `spark_pipeline_manifest.json` next to the Spark Parquet
 outputs. Before those outputs are published, the adapter validates that the
 silver, rejected-order, and gold metric DataFrame columns still match the
 published contracts and records the validation in the manifest. It writes all
@@ -415,9 +425,12 @@ Each successful run also writes:
   `spark_gold_customer_metrics/`, `spark_gold_category_metrics/`, and
   `spark_gold_rejection_metrics/` when `src/spark_pipeline.py` is run with
   PySpark installed.
+- `spark_data_quality_report.json` with Spark raw-source expectation results,
+  observed row counts, and failed expectation names.
 - `spark_pipeline_run_summary.md` with a concise Spark handoff covering health
-  warnings, reconciliation status, source high-watermark and status counts,
-  output row-count deltas, checksum-change flags, and threshold breaches.
+  warnings, quality expectation results, reconciliation status, source
+  high-watermark and status counts, output row-count deltas, checksum-change
+  flags, and threshold breaches.
 
 ## Streamlit Dashboard
 

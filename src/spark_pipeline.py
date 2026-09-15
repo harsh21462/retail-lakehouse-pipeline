@@ -32,7 +32,7 @@ try:
         write_json,
         write_text,
     )
-    from .quality_checks import REQUIRED_COLUMNS
+    from .quality_checks import REQUIRED_COLUMNS, raise_for_failed_quality
 except ImportError:  # Support direct execution with `python src/spark_pipeline.py`.
     from pipeline import (
         build_runtime_environment,
@@ -60,7 +60,7 @@ except ImportError:  # Support direct execution with `python src/spark_pipeline.
         write_json,
         write_text,
     )
-    from quality_checks import REQUIRED_COLUMNS
+    from quality_checks import REQUIRED_COLUMNS, raise_for_failed_quality
 
 
 SILVER_COLUMNS = [
@@ -76,6 +76,7 @@ SILVER_COLUMNS = [
 REJECTED_COLUMNS = [*REQUIRED_COLUMNS, "rejection_reason"]
 SPARK_MANIFEST_FILENAME = "spark_pipeline_manifest.json"
 SPARK_RUN_SUMMARY_FILENAME = "spark_pipeline_run_summary.md"
+SPARK_QUALITY_REPORT_FILENAME = "spark_data_quality_report.json"
 LOGGER = logging.getLogger(__name__)
 SPARK_OUTPUT_DESCRIPTIONS = {
     "silver_orders": "Cleaned analytics-ready orders produced by Spark.",
@@ -281,6 +282,187 @@ def build_spark_source_profile(raw_orders_df):
             "order_id": high_watermark_order_id,
         },
         "status_counts": dict(sorted(status_counts.items())),
+    }
+
+
+def _spark_count_where(dataframe, predicate):
+    return dataframe.where(predicate).count()
+
+
+def _spark_expectation(name, success, observed):
+    return {"expectation": name, "success": success, "observed": observed}
+
+
+def build_spark_raw_quality_report(
+    raw_orders_df,
+    included_statuses=None,
+    order_date_start=None,
+    order_date_end=None,
+):
+    columns = list(raw_orders_df.columns)
+    row_count = raw_orders_df.count()
+    missing_columns = sorted(set(REQUIRED_COLUMNS) - set(columns))
+    unexpected_columns = sorted(set(columns) - set(REQUIRED_COLUMNS))
+
+    malformed_row_count = 0
+    blank_order_id_count = 0
+    duplicate_order_id_count = 0
+    invalid_amount_count = 0
+    invalid_date_count = 0
+    blank_dimension_count = 0
+    matching_status_count = 0
+    selected_row_count = 0
+
+    if not missing_columns:
+        null_predicate = " or ".join(
+            f"{column} is null" for column in REQUIRED_COLUMNS
+        )
+        malformed_row_count = _spark_count_where(raw_orders_df, null_predicate)
+        blank_order_id_count = _spark_count_where(
+            raw_orders_df,
+            "order_id is null or trim(order_id) = ''",
+        )
+        duplicate_order_id_count = (
+            raw_orders_df.where("order_id is not null and trim(order_id) <> ''")
+            .groupBy("order_id")
+            .count()
+            .where("count > 1")
+            .count()
+        )
+        invalid_amount_count = _spark_count_where(
+            raw_orders_df,
+            "try_cast(quantity as int) is null or try_cast(quantity as int) <= 0 "
+            "or try_cast(unit_price as double) is null "
+            "or try_cast(unit_price as double) <= 0",
+        )
+        invalid_date_count = _spark_count_where(
+            raw_orders_df,
+            "order_date is null or to_date(order_date, 'yyyy-MM-dd') is null "
+            "or date_format(to_date(order_date, 'yyyy-MM-dd'), 'yyyy-MM-dd') "
+            "<> order_date",
+        )
+        blank_dimension_count = _spark_count_where(
+            raw_orders_df,
+            " or ".join(
+                f"{column} is null or trim({column}) = ''"
+                for column in ["customer_id", "category", "product", "status"]
+            ),
+        )
+
+        if included_statuses is not None:
+            status_values = ", ".join(
+                _spark_sql_literal(status) for status in included_statuses
+            )
+            matching_status_count = _spark_count_where(
+                raw_orders_df,
+                f"status in ({status_values})",
+            )
+
+            selection_predicates = [f"status in ({status_values})"]
+            if order_date_start is not None:
+                selection_predicates.append(
+                    f"order_date >= {_spark_sql_literal(order_date_start)}"
+                )
+            if order_date_end is not None:
+                selection_predicates.append(
+                    f"order_date <= {_spark_sql_literal(order_date_end)}"
+                )
+            selected_row_count = _spark_count_where(
+                raw_orders_df,
+                " and ".join(selection_predicates),
+            )
+
+    expectations = [
+        _spark_expectation(
+            "dataset_is_not_empty",
+            row_count > 0,
+            {"row_count": row_count},
+        ),
+        _spark_expectation(
+            "required_columns_are_present",
+            not missing_columns,
+            {"missing_columns": missing_columns},
+        ),
+        _spark_expectation(
+            "raw_schema_matches_contract",
+            not missing_columns and not unexpected_columns,
+            {
+                "required_columns": REQUIRED_COLUMNS,
+                "unexpected_columns": unexpected_columns,
+            },
+        ),
+        _spark_expectation(
+            "rows_are_well_formed",
+            not missing_columns and malformed_row_count == 0,
+            {"malformed_row_count": malformed_row_count},
+        ),
+        _spark_expectation(
+            "order_ids_are_populated",
+            not missing_columns and blank_order_id_count == 0,
+            {"invalid_row_count": blank_order_id_count},
+        ),
+        _spark_expectation(
+            "order_id_is_unique",
+            not missing_columns and duplicate_order_id_count == 0,
+            {"duplicate_order_id_count": duplicate_order_id_count},
+        ),
+        _spark_expectation(
+            "amounts_are_positive_numbers",
+            not missing_columns and invalid_amount_count == 0,
+            {"invalid_row_count": invalid_amount_count},
+        ),
+        _spark_expectation(
+            "order_dates_are_iso_dates",
+            not missing_columns and invalid_date_count == 0,
+            {"invalid_row_count": invalid_date_count},
+        ),
+        _spark_expectation(
+            "business_dimensions_are_populated",
+            not missing_columns and blank_dimension_count == 0,
+            {"invalid_row_count": blank_dimension_count},
+        ),
+    ]
+    if included_statuses is not None:
+        expectations.append(
+            _spark_expectation(
+                "included_statuses_match_source_rows",
+                not missing_columns and matching_status_count > 0,
+                {
+                    "included_statuses": list(included_statuses),
+                    "matching_rows": matching_status_count,
+                },
+            )
+        )
+    if included_statuses is not None and (
+        order_date_start is not None or order_date_end is not None
+    ):
+        expectations.append(
+            _spark_expectation(
+                "selected_rows_match_config",
+                not missing_columns and selected_row_count > 0,
+                {
+                    "included_statuses": list(included_statuses),
+                    "order_date_start": order_date_start,
+                    "order_date_end": order_date_end,
+                    "matching_rows": selected_row_count,
+                },
+            )
+        )
+
+    failed_expectations = [
+        result["expectation"] for result in expectations if not result["success"]
+    ]
+    return {
+        "engine": "spark",
+        "success": not failed_expectations,
+        "row_count": row_count,
+        "summary": {
+            "expectations": len(expectations),
+            "passed": len(expectations) - len(failed_expectations),
+            "failed": len(failed_expectations),
+            "failed_expectations": failed_expectations,
+        },
+        "expectations": expectations,
     }
 
 
@@ -689,6 +871,11 @@ def build_spark_lineage(*, raw_path, processed_dir, output_paths):
             "path": str(raw_path),
         },
         {
+            "id": "quality.spark_raw_order_expectations",
+            "type": "quality_report",
+            "path": str(processed_dir / SPARK_QUALITY_REPORT_FILENAME),
+        },
+        {
             "id": "catalog.spark_data_catalog",
             "type": "metadata",
             "embedded_in": str(processed_dir / SPARK_MANIFEST_FILENAME),
@@ -712,6 +899,7 @@ def build_spark_lineage(*, raw_path, processed_dir, output_paths):
         nodes.append(node)
 
     candidate_edges = [
+        ("source.raw_orders", "quality.spark_raw_order_expectations"),
         ("source.raw_orders", "spark.silver_orders"),
         ("source.raw_orders", "spark.rejected_orders"),
         ("spark.silver_orders", "spark.gold_revenue_metrics"),
@@ -756,6 +944,7 @@ def build_spark_manifest(
     output_row_counts,
     output_paths,
     source_profile,
+    quality_report,
 ):
     output_paths = dict(output_paths)
     return {
@@ -778,6 +967,11 @@ def build_spark_manifest(
             "file_audit": build_file_audit(raw_path),
             "rows": reconciliation["bronze_rows"],
             "profile": source_profile,
+        },
+        "quality": {
+            "success": quality_report["success"],
+            "summary": quality_report["summary"],
+            "expectations": quality_report["expectations"],
         },
         "config": {
             "included_statuses": list(config["included_statuses"]),
@@ -1108,6 +1302,7 @@ def build_spark_run_summary_markdown(manifest):
         f"- Completed: {_format_spark_summary_value(run.get('completed_at_utc'))}",
         f"- Source: `{_format_spark_summary_value(source.get('path'))}`",
         f"- Health: {_format_spark_summary_value(health.get('status'))}",
+        f"- Quality: {'passed' if manifest.get('quality', {}).get('success') else 'failed'}",
         f"- Health warnings: {health.get('warning_count', 0)}",
         f"- Reconciliation: "
         f"{'passed' if reconciliation.get('success') else 'failed'}",
@@ -1150,6 +1345,29 @@ def build_spark_run_summary_markdown(manifest):
         )
     if not status_counts:
         lines.append("| n/a | n/a | n/a |")
+
+    quality = manifest.get("quality", {})
+    if isinstance(quality, dict):
+        expectations = quality.get("expectations", [])
+        if isinstance(expectations, list) and expectations:
+            lines.extend(
+                [
+                    "",
+                    "## Quality Expectations",
+                    "",
+                    "| Expectation | Status | Observed |",
+                    "| --- | --- | --- |",
+                ]
+            )
+            for expectation in expectations:
+                if not isinstance(expectation, dict):
+                    continue
+                status = "passed" if expectation.get("success") else "failed"
+                lines.append(
+                    f"| `{_format_spark_summary_value(expectation.get('expectation'))}` | "
+                    f"{status} | "
+                    f"`{_format_spark_summary_value(expectation.get('observed'))}` |"
+                )
 
     lines.extend(
         [
@@ -1227,6 +1445,46 @@ def run_spark_silver_pipeline(config_path):
     spark = SparkSession.builder.appName("retail-lakehouse-silver").getOrCreate()
     try:
         raw_orders_df = spark.read.option("header", True).csv(str(raw_path))
+        quality_report = build_spark_raw_quality_report(
+            raw_orders_df,
+            included_statuses=config["included_statuses"],
+            order_date_start=config.get("order_date_start"),
+            order_date_end=config.get("order_date_end"),
+        )
+        quality_report_path = processed_dir / SPARK_QUALITY_REPORT_FILENAME
+        write_json(quality_report_path, quality_report)
+        LOGGER.info("Wrote Spark data quality report to %s", quality_report_path)
+        if not quality_report["success"]:
+            summary_path = processed_dir / SPARK_RUN_SUMMARY_FILENAME
+            write_text(
+                summary_path,
+                build_spark_run_summary_markdown(
+                    {
+                        "run": {
+                            "completed_at_utc": None,
+                            "config_path": str(config_path.resolve()),
+                        },
+                        "source": {
+                            "path": str(raw_path),
+                            "rows": quality_report["row_count"],
+                        },
+                        "quality": {
+                            "success": quality_report["success"],
+                            "summary": quality_report["summary"],
+                            "expectations": quality_report["expectations"],
+                        },
+                        "config": {
+                            "included_statuses": config["included_statuses"],
+                            "order_date_window": {
+                                "start": config.get("order_date_start"),
+                                "end": config.get("order_date_end"),
+                            },
+                        },
+                    }
+                ),
+            )
+            LOGGER.info("Wrote failed Spark quality run summary to %s", summary_path)
+        raise_for_failed_quality(quality_report)
         silver_df, rejected_df = build_silver_and_rejected_dataframes(
             raw_orders_df,
             config["included_statuses"],
@@ -1325,6 +1583,7 @@ def run_spark_silver_pipeline(config_path):
             output_row_counts=output_row_counts,
             output_paths=output_paths,
             source_profile=source_profile,
+            quality_report=quality_report,
         )
         manifest_path = processed_dir / SPARK_MANIFEST_FILENAME
         previous_manifest, previous_manifest_unavailable_reason = (

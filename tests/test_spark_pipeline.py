@@ -22,6 +22,8 @@ class FakeDataFrame:
         aggregate_row=None,
         aggregate_rows_by_expression=None,
         group_count_rows=None,
+        where_count_by_expression=None,
+        duplicate_order_id_count=0,
     ):
         self.calls = calls or []
         self.count_value = count_value
@@ -29,16 +31,27 @@ class FakeDataFrame:
         self.aggregate_row = aggregate_row
         self.aggregate_rows_by_expression = aggregate_rows_by_expression or {}
         self.group_count_rows = group_count_rows or []
+        self.where_count_by_expression = where_count_by_expression or {}
+        self.duplicate_order_id_count = duplicate_order_id_count
         self.temp_view_name = None
 
     def where(self, expression):
+        count_value = self.where_count_by_expression.get(expression)
+        if count_value is None:
+            count_value = (
+                self.count_value
+                if str(expression).startswith("status in (")
+                else 0
+            )
         return FakeDataFrame(
             [*self.calls, ("where", expression)],
-            self.count_value,
+            count_value,
             columns=self.columns,
             aggregate_row=self.aggregate_row,
             aggregate_rows_by_expression=self.aggregate_rows_by_expression,
             group_count_rows=self.group_count_rows,
+            where_count_by_expression=self.where_count_by_expression,
+            duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
     def selectExpr(self, *expressions):
@@ -53,21 +66,35 @@ class FakeDataFrame:
             aggregate_row=aggregate_row,
             aggregate_rows_by_expression=self.aggregate_rows_by_expression,
             group_count_rows=self.group_count_rows,
+            where_count_by_expression=self.where_count_by_expression,
+            duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
     def withColumn(self, name, expression):
         return FakeDataFrame(
             [*self.calls, ("withColumn", name, expression)],
             self.count_value,
+            columns=self.columns,
+            aggregate_row=self.aggregate_row,
+            aggregate_rows_by_expression=self.aggregate_rows_by_expression,
+            group_count_rows=self.group_count_rows,
+            where_count_by_expression=self.where_count_by_expression,
+            duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
     def select(self, *columns):
-        return FakeDataFrame([*self.calls, ("select", columns)], self.count_value)
+        return FakeDataFrame(
+            [*self.calls, ("select", columns)],
+            self.count_value,
+            columns=list(columns),
+            duplicate_order_id_count=self.duplicate_order_id_count,
+        )
 
     def groupBy(self, *columns):
         return FakeGroupedDataFrame(
             [*self.calls, ("groupBy", columns)],
             self.group_count_rows,
+            self.duplicate_order_id_count,
         )
 
     def count(self):
@@ -83,12 +110,18 @@ class FakeDataFrame:
 
 
 class FakeGroupedDataFrame:
-    def __init__(self, calls, group_count_rows):
+    def __init__(self, calls, group_count_rows, duplicate_order_id_count=0):
         self.calls = calls
         self.group_count_rows = group_count_rows
+        self.duplicate_order_id_count = duplicate_order_id_count
 
     def count(self):
         return self
+
+    def where(self, expression):
+        if expression == "count > 1":
+            return FakeDataFrame(count_value=self.duplicate_order_id_count)
+        return FakeDataFrame()
 
     def collect(self):
         return self.group_count_rows
@@ -379,6 +412,79 @@ def test_spark_health_warnings_report_future_dated_source_data():
     ]
 
 
+def test_spark_raw_quality_report_validates_source_contract_and_counts():
+    raw_df = FakeDataFrame(
+        count_value=4,
+        columns=spark_pipeline.REQUIRED_COLUMNS,
+        where_count_by_expression={
+            "order_id is null or trim(order_id) = ''": 1,
+            "try_cast(quantity as int) is null or try_cast(quantity as int) <= 0 "
+            "or try_cast(unit_price as double) is null "
+            "or try_cast(unit_price as double) <= 0": 2,
+            "status in ('delivered')": 3,
+            (
+                "status in ('delivered') and order_date >= '2026-06-01' "
+                "and order_date <= '2026-06-30'"
+            ): 2,
+        },
+        duplicate_order_id_count=1,
+    )
+
+    report = spark_pipeline.build_spark_raw_quality_report(
+        raw_df,
+        included_statuses=["delivered"],
+        order_date_start="2026-06-01",
+        order_date_end="2026-06-30",
+    )
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["engine"] == "spark"
+    assert report["success"] is False
+    assert report["summary"]["failed_expectations"] == [
+        "order_ids_are_populated",
+        "order_id_is_unique",
+        "amounts_are_positive_numbers",
+    ]
+    assert results["required_columns_are_present"]["success"] is True
+    assert results["order_ids_are_populated"]["observed"] == {
+        "invalid_row_count": 1,
+    }
+    assert results["amounts_are_positive_numbers"]["observed"] == {
+        "invalid_row_count": 2,
+    }
+    assert results["included_statuses_match_source_rows"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "matching_rows": 3,
+    }
+    assert results["selected_rows_match_config"]["observed"]["matching_rows"] == 2
+
+
+def test_spark_raw_quality_report_fails_on_missing_or_unexpected_columns():
+    report = spark_pipeline.build_spark_raw_quality_report(
+        FakeDataFrame(
+            count_value=1,
+            columns=["order_id", "customer_id", "unexpected_column"],
+        ),
+        included_statuses=["delivered"],
+    )
+    results = {item["expectation"]: item for item in report["expectations"]}
+
+    assert report["success"] is False
+    assert results["required_columns_are_present"]["observed"] == {
+        "missing_columns": [
+            "category",
+            "order_date",
+            "product",
+            "quantity",
+            "status",
+            "unit_price",
+        ],
+    }
+    assert results["raw_schema_matches_contract"]["observed"][
+        "unexpected_columns"
+    ] == ["unexpected_column"]
+
+
 def test_spark_output_contract_validation_detects_column_drift():
     validation = spark_pipeline.build_spark_output_contract_validation(
         {
@@ -485,6 +591,7 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     written_paths = []
     raw_df = FakeDataFrame(
         count_value=3,
+        columns=spark_pipeline.REQUIRED_COLUMNS,
         aggregate_rows_by_expression={
             (
                 "min(order_date) as min_order_date",
@@ -668,6 +775,23 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
         "warnings": [],
         "warning_count": 0,
         "threshold_breaches": [],
+    }
+    spark_quality_report = json.loads(
+        (processed_dir / "spark_data_quality_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert spark_quality_report["success"] is True
+    assert spark_quality_report["summary"] == {
+        "expectations": 10,
+        "passed": 10,
+        "failed": 0,
+        "failed_expectations": [],
+    }
+    assert manifest["quality"] == {
+        "success": True,
+        "summary": spark_quality_report["summary"],
+        "expectations": spark_quality_report["expectations"],
     }
     assert manifest["reconciliation"] == result["reconciliation"]
     assert manifest["metric_reconciliation"] == {
@@ -881,10 +1005,76 @@ def test_spark_pipeline_reconciles_counts_before_writing(tmp_path, monkeypatch):
     assert "# Spark Pipeline Run Summary" in run_summary
     assert f"- Source: `{raw_path}`" in run_summary
     assert "- Health: passed" in run_summary
+    assert "- Quality: passed" in run_summary
     assert "- Reconciliation: passed" in run_summary
+    assert "## Quality Expectations" in run_summary
     assert "- Metric reconciliation: passed" in run_summary
     assert "| `silver_orders` | 2 | n/a | n/a |" in run_summary
     assert "| `cancelled` | 1 | n/a |" in run_summary
+
+
+def test_spark_pipeline_writes_summary_when_quality_fails(tmp_path, monkeypatch):
+    config_path = tmp_path / "pipeline.json"
+    raw_path = tmp_path / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    raw_path.write_text(
+        "order_id,customer_id\n1001,C-001\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw_df = FakeDataFrame(
+        count_value=1,
+        columns=["order_id", "customer_id"],
+    )
+    FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
+
+    monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Data quality checks failed: required_columns_are_present, "
+            "raw_schema_matches_contract"
+        ),
+    ):
+        spark_pipeline.run_spark_silver_pipeline(config_path)
+
+    quality_report = json.loads(
+        (processed_dir / "spark_data_quality_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    run_summary = (
+        processed_dir / "spark_pipeline_run_summary.md"
+    ).read_text(encoding="utf-8")
+
+    assert quality_report["success"] is False
+    assert quality_report["summary"]["failed_expectations"] == [
+        "required_columns_are_present",
+        "raw_schema_matches_contract",
+        "rows_are_well_formed",
+        "order_ids_are_populated",
+        "order_id_is_unique",
+        "amounts_are_positive_numbers",
+        "order_dates_are_iso_dates",
+        "business_dimensions_are_populated",
+        "included_statuses_match_source_rows",
+    ]
+    assert "- Quality: failed" in run_summary
+    assert "| `required_columns_are_present` | failed |" in run_summary
+    assert "| `included_statuses_match_source_rows` | failed |" in run_summary
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+    assert FakeSparkSession.stop_count == 1
 
 
 def test_spark_data_catalog_embeds_output_contracts(tmp_path):
@@ -966,6 +1156,7 @@ def test_spark_lineage_links_source_outputs_and_catalog(tmp_path):
     assert lineage["root"] == str(tmp_path)
     assert {node["id"] for node in lineage["nodes"]} == {
         "source.raw_orders",
+        "quality.spark_raw_order_expectations",
         "catalog.spark_data_catalog",
         "spark.silver_orders",
         "spark.rejected_orders",
@@ -974,6 +1165,10 @@ def test_spark_lineage_links_source_outputs_and_catalog(tmp_path):
         "spark.gold_category_metrics",
         "spark.gold_rejection_metrics",
     }
+    assert {
+        "from": "source.raw_orders",
+        "to": "quality.spark_raw_order_expectations",
+    } in lineage["edges"]
     assert {
         "from": "source.raw_orders",
         "to": "spark.silver_orders",
@@ -1400,7 +1595,7 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
         encoding="utf-8",
     )
     written_paths = []
-    raw_df = FakeDataFrame(count_value=3)
+    raw_df = FakeDataFrame(count_value=3, columns=spark_pipeline.REQUIRED_COLUMNS)
     silver_df = FakeWritableDataFrame(
         1,
         written_paths,
@@ -1429,6 +1624,68 @@ def test_spark_pipeline_fails_before_writing_when_counts_do_not_balance(
     assert not (processed_dir / "spark_pipeline_manifest.json").exists()
 
 
+def test_spark_pipeline_fails_before_writing_when_raw_quality_fails(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "pipeline.json"
+    raw_path = tmp_path / "orders.csv"
+    processed_dir = tmp_path / "processed"
+    raw_path.write_text(
+        "order_id,customer_id\n1001,C001\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "raw_path": str(raw_path),
+                "processed_dir": str(processed_dir),
+                "included_statuses": ["delivered"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    written_paths = []
+    raw_df = FakeDataFrame(
+        count_value=1,
+        columns=["order_id", "customer_id"],
+    )
+    FakeSparkSession.reader = FakeSparkReader(raw_df)
+    FakeSparkSession.stop_count = 0
+    FakeSparkSession.written_paths = written_paths
+
+    monkeypatch.setattr(spark_pipeline, "_require_pyspark", lambda: FakeSparkSession)
+
+    with pytest.raises(ValueError, match="Data quality checks failed"):
+        spark_pipeline.run_spark_silver_pipeline(config_path)
+
+    quality_report = json.loads(
+        (processed_dir / "spark_data_quality_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert quality_report["success"] is False
+    assert quality_report["summary"]["failed_expectations"] == [
+        "required_columns_are_present",
+        "raw_schema_matches_contract",
+        "rows_are_well_formed",
+        "order_ids_are_populated",
+        "order_id_is_unique",
+        "amounts_are_positive_numbers",
+        "order_dates_are_iso_dates",
+        "business_dimensions_are_populated",
+        "included_statuses_match_source_rows",
+    ]
+    run_summary = (
+        processed_dir / "spark_pipeline_run_summary.md"
+    ).read_text(encoding="utf-8")
+    assert "- Quality: failed" in run_summary
+    assert "`required_columns_are_present` | failed" in run_summary
+    assert written_paths == []
+    assert FakeSparkSession.stop_count == 1
+    assert not (processed_dir / "spark_pipeline_manifest.json").exists()
+
+
 def test_spark_pipeline_fails_before_writing_when_output_contract_drifts(
     tmp_path,
     monkeypatch,
@@ -1451,7 +1708,7 @@ def test_spark_pipeline_fails_before_writing_when_output_contract_drifts(
         encoding="utf-8",
     )
     written_paths = []
-    raw_df = FakeDataFrame(count_value=3)
+    raw_df = FakeDataFrame(count_value=3, columns=spark_pipeline.REQUIRED_COLUMNS)
     silver_df = FakeWritableDataFrame(
         2,
         written_paths,
@@ -1513,7 +1770,7 @@ def test_spark_pipeline_fails_before_writing_when_gold_metrics_drift(
         encoding="utf-8",
     )
     written_paths = []
-    raw_df = FakeDataFrame(count_value=3)
+    raw_df = FakeDataFrame(count_value=3, columns=spark_pipeline.REQUIRED_COLUMNS)
     silver_df = FakeWritableDataFrame(
         2,
         written_paths,
@@ -1628,7 +1885,7 @@ def test_spark_pipeline_preserves_existing_outputs_when_staged_write_fails(
         encoding="utf-8",
     )
     written_paths = []
-    raw_df = FakeDataFrame(count_value=3)
+    raw_df = FakeDataFrame(count_value=3, columns=spark_pipeline.REQUIRED_COLUMNS)
     silver_df = FakeWritableDataFrame(
         2,
         written_paths,
