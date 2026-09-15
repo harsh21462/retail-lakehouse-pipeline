@@ -426,7 +426,8 @@ Each successful run also writes:
   `spark_gold_rejection_metrics/` when `src/spark_pipeline.py` is run with
   PySpark installed.
 - `spark_data_quality_report.json` with Spark raw-source expectation results,
-  observed row counts, and failed expectation names.
+  observed row counts, per-status matching counts for configured source
+  coverage, and failed expectation names.
 - `spark_pipeline_run_summary.md` with a concise Spark handoff covering health
   warnings, quality expectation results, reconciliation status, source
   high-watermark and status counts, output row-count deltas, checksum-change

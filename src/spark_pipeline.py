@@ -289,6 +289,16 @@ def _spark_count_where(dataframe, predicate):
     return dataframe.where(predicate).count()
 
 
+def _spark_status_counts_where(dataframe, predicate):
+    status_counts = {}
+    for row in dataframe.where(predicate).groupBy("status").count().collect():
+        status = _optional_row_value(row, "status")
+        count = _optional_row_value(row, "count")
+        if status is not None and count is not None:
+            status_counts[status] = count
+    return dict(sorted(status_counts.items()))
+
+
 def _spark_expectation(name, success, observed):
     return {"expectation": name, "success": success, "observed": observed}
 
@@ -312,6 +322,8 @@ def build_spark_raw_quality_report(
     blank_dimension_count = 0
     matching_status_count = 0
     selected_row_count = 0
+    matching_status_counts = {}
+    selected_status_counts = {}
 
     if not missing_columns:
         null_predicate = " or ".join(
@@ -353,12 +365,17 @@ def build_spark_raw_quality_report(
             status_values = ", ".join(
                 _spark_sql_literal(status) for status in included_statuses
             )
+            status_predicate = f"status in ({status_values})"
             matching_status_count = _spark_count_where(
                 raw_orders_df,
-                f"status in ({status_values})",
+                status_predicate,
+            )
+            matching_status_counts = _spark_status_counts_where(
+                raw_orders_df,
+                status_predicate,
             )
 
-            selection_predicates = [f"status in ({status_values})"]
+            selection_predicates = [status_predicate]
             if order_date_start is not None:
                 selection_predicates.append(
                     f"order_date >= {_spark_sql_literal(order_date_start)}"
@@ -367,9 +384,11 @@ def build_spark_raw_quality_report(
                 selection_predicates.append(
                     f"order_date <= {_spark_sql_literal(order_date_end)}"
                 )
-            selected_row_count = _spark_count_where(
+            selection_predicate = " and ".join(selection_predicates)
+            selected_row_count = _spark_count_where(raw_orders_df, selection_predicate)
+            selected_status_counts = _spark_status_counts_where(
                 raw_orders_df,
-                " and ".join(selection_predicates),
+                selection_predicate,
             )
 
     expectations = [
@@ -430,6 +449,7 @@ def build_spark_raw_quality_report(
                 {
                     "included_statuses": list(included_statuses),
                     "matching_rows": matching_status_count,
+                    "matching_status_counts": matching_status_counts,
                 },
             )
         )
@@ -445,6 +465,7 @@ def build_spark_raw_quality_report(
                     "order_date_start": order_date_start,
                     "order_date_end": order_date_end,
                     "matching_rows": selected_row_count,
+                    "matching_status_counts": selected_status_counts,
                 },
             )
         )

@@ -23,6 +23,7 @@ class FakeDataFrame:
         aggregate_rows_by_expression=None,
         group_count_rows=None,
         where_count_by_expression=None,
+        where_group_count_rows_by_expression=None,
         duplicate_order_id_count=0,
     ):
         self.calls = calls or []
@@ -32,11 +33,18 @@ class FakeDataFrame:
         self.aggregate_rows_by_expression = aggregate_rows_by_expression or {}
         self.group_count_rows = group_count_rows or []
         self.where_count_by_expression = where_count_by_expression or {}
+        self.where_group_count_rows_by_expression = (
+            where_group_count_rows_by_expression or {}
+        )
         self.duplicate_order_id_count = duplicate_order_id_count
         self.temp_view_name = None
 
     def where(self, expression):
         count_value = self.where_count_by_expression.get(expression)
+        group_count_rows = self.where_group_count_rows_by_expression.get(
+            expression,
+            self.group_count_rows,
+        )
         if count_value is None:
             count_value = (
                 self.count_value
@@ -49,8 +57,11 @@ class FakeDataFrame:
             columns=self.columns,
             aggregate_row=self.aggregate_row,
             aggregate_rows_by_expression=self.aggregate_rows_by_expression,
-            group_count_rows=self.group_count_rows,
+            group_count_rows=group_count_rows,
             where_count_by_expression=self.where_count_by_expression,
+            where_group_count_rows_by_expression=(
+                self.where_group_count_rows_by_expression
+            ),
             duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
@@ -67,6 +78,9 @@ class FakeDataFrame:
             aggregate_rows_by_expression=self.aggregate_rows_by_expression,
             group_count_rows=self.group_count_rows,
             where_count_by_expression=self.where_count_by_expression,
+            where_group_count_rows_by_expression=(
+                self.where_group_count_rows_by_expression
+            ),
             duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
@@ -79,6 +93,9 @@ class FakeDataFrame:
             aggregate_rows_by_expression=self.aggregate_rows_by_expression,
             group_count_rows=self.group_count_rows,
             where_count_by_expression=self.where_count_by_expression,
+            where_group_count_rows_by_expression=(
+                self.where_group_count_rows_by_expression
+            ),
             duplicate_order_id_count=self.duplicate_order_id_count,
         )
 
@@ -427,6 +444,17 @@ def test_spark_raw_quality_report_validates_source_contract_and_counts():
                 "and order_date <= '2026-06-30'"
             ): 2,
         },
+        where_group_count_rows_by_expression={
+            "status in ('delivered')": [
+                {"status": "delivered", "count": 3},
+            ],
+            (
+                "status in ('delivered') and order_date >= '2026-06-01' "
+                "and order_date <= '2026-06-30'"
+            ): [
+                {"status": "delivered", "count": 2},
+            ],
+        },
         duplicate_order_id_count=1,
     )
 
@@ -455,8 +483,15 @@ def test_spark_raw_quality_report_validates_source_contract_and_counts():
     assert results["included_statuses_match_source_rows"]["observed"] == {
         "included_statuses": ["delivered"],
         "matching_rows": 3,
+        "matching_status_counts": {"delivered": 3},
     }
-    assert results["selected_rows_match_config"]["observed"]["matching_rows"] == 2
+    assert results["selected_rows_match_config"]["observed"] == {
+        "included_statuses": ["delivered"],
+        "order_date_start": "2026-06-01",
+        "order_date_end": "2026-06-30",
+        "matching_rows": 2,
+        "matching_status_counts": {"delivered": 2},
+    }
 
 
 def test_spark_raw_quality_report_fails_on_missing_or_unexpected_columns():
